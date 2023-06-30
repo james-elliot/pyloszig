@@ -1,9 +1,10 @@
 const std = @import("std");
 
 // 27 bits use 2GB
-const NB_BITS: u8 = 30;
-const SIZEX: usize = 7;
-const SIZEY: usize = 6;
+const NB_BITS: u8 = 25;
+const SIZEX: usize = 4;
+const SIZEY: usize = 4;
+const SIZEZ: usize = 4;
 // 6x7 NB_BITS=29 170s
 // 7x6 NB_BITS=30 367s
 
@@ -15,7 +16,6 @@ const Colors = i8;
 const Sigs = u64;
 
 const FOUR: usize = 4;
-const MAXDEPTH: Depth = SIZEX * SIZEY - 1;
 const WHITE: Colors = 1;
 const BLACK = -WHITE;
 const EMPTY: Colors = 0;
@@ -23,8 +23,8 @@ const HASH_SIZE: usize = 1 << NB_BITS;
 const HASH_MASK: Sigs = HASH_SIZE - 1;
 
 var first_hash: Sigs = undefined;
-var hashesw: [SIZEX][SIZEY]Sigs = undefined;
-var hashesb: [SIZEX][SIZEY]Sigs = undefined;
+var hashesw: [SIZEX][SIZEY][SIZEZ]Sigs = undefined;
+var hashesb: [SIZEX][SIZEY][SIZEZ]Sigs = undefined;
 
 const HashElem = packed struct {
     sig: Sigs,
@@ -41,8 +41,9 @@ const ZHASH = HashElem{
 };
 
 var hashes: []HashElem = undefined;
-var tab = [_][SIZEY]Colors{[_]Colors{EMPTY} ** SIZEY} ** SIZEX;
-var first = [_]usize{0} ** SIZEX;
+//var tab1 = [_]Colors{EMPTY} ** SIZEZ;
+//var tab2 = [_][SIZEY]Colors{[_]Colors{EMPTY} ** SIZEY} ** SIZEX;
+var tab = [_][SIZEY][SIZEZ]Colors{[_][SIZEZ]Colors{[_]Colors{EMPTY} ** SIZEZ} ** SIZEY} ** SIZEX;
 
 fn retrieve(hv: Sigs, v_inf: *Vals, v_sup: *Vals) bool {
     const ind: usize = hv & HASH_MASK;
@@ -57,7 +58,7 @@ fn retrieve(hv: Sigs, v_inf: *Vals, v_sup: *Vals) bool {
 
 fn store(hv: Sigs, alpha: Vals, beta: Vals, g: Vals, depth: Depth) void {
     const ind = hv & HASH_MASK;
-    const d = MAXDEPTH + 2 - depth;
+    const d = std.math.maxInt(Depth) - depth;
     if (hashes[ind].d <= d) {
         if (hashes[ind].sig != hv) {
             hashes[ind].d = d;
@@ -76,90 +77,8 @@ fn store(hv: Sigs, alpha: Vals, beta: Vals, g: Vals, depth: Depth) void {
     }
 }
 
-fn eval(x: usize, y: usize, color: Colors) bool {
-    // For vertical search, search only below
-    if (y >= FOUR - 1) {
-        var nb: u32 = 1;
-        var j = y - 1;
-        while (true) {
-            if (tab[x][j] == color) nb += 1 else break;
-            if (j == 0) break;
-            j -= 1;
-        }
-        if (nb >= FOUR) return true;
-    }
-    {
-        // Horizontal search
-        var nb: u32 = 1;
-        if (x > 0) {
-            var i = x - 1;
-            while (true) {
-                if (tab[i][y] == color) nb += 1 else break;
-                if (i == 0) break;
-                i -= 1;
-            }
-        }
-        if (x < SIZEX - 1) {
-            var i = x + 1;
-            while (true) {
-                if (tab[i][y] == color) nb += 1 else break;
-                if (i == SIZEX - 1) break;
-                i += 1;
-            }
-        }
-        if (nb >= FOUR) return true;
-    }
-    {
-        // diag1
-        var nb: u32 = 1;
-        if ((x < SIZEX - 1) and (y < SIZEY - 1)) {
-            var i = x + 1;
-            var j = y + 1;
-            while (true) {
-                if (tab[i][j] == color) nb += 1 else break;
-                if ((i == SIZEX - 1) or (j == SIZEY - 1)) break;
-                i += 1;
-                j += 1;
-            }
-        }
-        if ((x > 0) and (y > 0)) {
-            var i = x - 1;
-            var j = y - 1;
-            while (true) {
-                if (tab[i][j] == color) nb += 1 else break;
-                if ((i == 0) or (j == 0)) break;
-                i -= 1;
-                j -= 1;
-            }
-        }
-        if (nb >= FOUR) return true;
-    }
-    {
-        // diag2
-        var nb: u32 = 1;
-        if ((x < SIZEX - 1) and (y > 0)) {
-            var i = x + 1;
-            var j = y - 1;
-            while (true) {
-                if (tab[i][j] == color) nb += 1 else break;
-                if ((i == SIZEX - 1) or (j == 0)) break;
-                i += 1;
-                j -= 1;
-            }
-        }
-        if ((x > 0) and (y < SIZEY - 1)) {
-            var i = x - 1;
-            var j = y + 1;
-            while (true) {
-                if (tab[i][j] == color) nb += 1 else break;
-                if ((i == 0) or (j == SIZEY - 1)) break;
-                i -= 1;
-                j += 1;
-            }
-        }
-        if (nb >= FOUR) return true;
-    }
-    return false;
+fn eval() Vals {
+    return 0;
 }
 
 fn ab(
@@ -167,73 +86,49 @@ fn ab(
     beta: Vals,
     color: Colors,
     depth: Depth,
+    maxdepth: Depth,
     hv: Sigs,
-    hv2: Sigs,
 ) Vals {
-    const indexes = comptime init: {
-        var t: [SIZEX]usize = undefined;
-        for (&t, 0..) |*b, ix| b.* = (SIZEX - 1) / 2 + (ix + 1) / 2 * (2 * (ix % 2)) - (ix + 1) / 2;
-        break :init t;
-    };
     var a = alpha;
     var b = beta;
     var v_inf: Vals = undefined;
     var v_sup: Vals = undefined;
-    if (retrieve(@min(hv, hv2), &v_inf, &v_sup)) {
+    if (retrieve(hv, &v_inf, &v_sup)) {
         if (v_inf == v_sup) return v_inf;
         if (v_inf >= b) return v_inf;
         if (v_sup <= a) return v_sup;
         a = @max(a, v_inf);
         b = @min(b, v_sup);
     }
-    for (indexes) |x| {
-        const y = first[x];
-        if ((y != SIZEY) and (eval(x, y, color))) return color;
+    if (depth == maxdepth) {
+        return eval();
     }
-    if (depth == MAXDEPTH) return 0;
 
     var g: Vals = if (color == WHITE) Vals_min else Vals_max;
     var nhv: Sigs = undefined;
-    var nhv2: Sigs = undefined;
-    for (indexes) |x| {
-        const y = first[x];
-        if (y < SIZEY) {
-            tab[x][y] = color;
-            first[x] += 1;
-            if (color == WHITE) {
-                nhv = hv ^ hashesw[x][y];
-                nhv2 = hv2 ^ hashesw[SIZEX - 1 - x][y];
-            } else {
-                nhv = hv ^ hashesb[x][y];
-                nhv2 = hv2 ^ hashesb[SIZEX - 1 - x][y];
-            }
-            const v = ab(a, b, -color, depth + 1, nhv, nhv2);
-            first[x] -= 1;
-            tab[x][y] = EMPTY;
-            if (color == WHITE) {
-                if (v > g) {
-                    g = v;
-                    if (g > a) {
-                        a = g;
-                        if (a >= b) {
-                            break;
-                        }
-                    }
+    for (0..SIZEX) |x| {
+        for (0..SIZEY) |y| {
+            for (0..SIZEZ) |z| {
+                tab[x][y][z] = color;
+                if (color == WHITE) {
+                    nhv = hv ^ hashesw[x][y][z];
+                } else {
+                    nhv = hv ^ hashesb[x][y][z];
                 }
-            } else {
-                if (v < g) {
-                    g = v;
-                    if (g < b) {
-                        b = g;
-                        if (a >= b) {
-                            break;
-                        }
-                    }
+                const v = ab(a, b, -color, depth + 1, maxdepth, nhv);
+                tab[x][y][z] = EMPTY;
+                if (color == WHITE) {
+                    g = @max(v, g);
+                    a = @max(a, g);
+                } else {
+                    g = @min(v, g);
+                    a = @min(b, g);
                 }
+                if (a >= b) break;
             }
         }
     }
-    store(@min(hv, hv2), alpha, beta, g, depth);
+    store(hv, alpha, beta, g, depth);
     return g;
 }
 
@@ -245,15 +140,17 @@ pub fn main() !void {
     defer allocator.free(hashes);
     for (hashes) |*a| a.* = ZHASH;
     var rnd = RndGen.init(0);
-    for (&hashesw) |*b| {
-        for (b) |*a| a.* = rnd.random().int(Sigs);
-    }
-    for (&hashesb) |*b| {
-        for (b) |*a| a.* = rnd.random().int(Sigs);
+    for (0..SIZEX) |x| {
+        for (0..SIZEY) |y| {
+            for (0..SIZEZ) |z| {
+                hashesw[x][y][z] = rnd.random().int(Sigs);
+                hashesb[x][y][z] = rnd.random().int(Sigs);
+            }
+        }
     }
     first_hash = rnd.random().int(Sigs);
     var t = std.time.milliTimestamp();
-    const ret = ab(Vals_min, Vals_max, WHITE, 0, first_hash, first_hash);
+    const ret = ab(Vals_min, Vals_max, WHITE, 0, 1, first_hash);
     t = std.time.milliTimestamp() - t;
     try stdout.print("{d}\n", .{t});
     try stdout.print("{d}\n", .{ret});
