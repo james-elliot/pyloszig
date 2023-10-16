@@ -23,7 +23,7 @@ const Move = packed struct {
     ox: usize,
     oy: usize,
     oz: usize,
-    rem: bool, // if true do not use (ox,oy,oz) and take the ball from the reserve
+    move: bool, // if true do not use (ox,oy,oz) and take the ball from the reserve
 };
 const NB_MAX_MOVES = 32;
 const Moves = [NB_MAX_MOVES]Move;
@@ -95,10 +95,10 @@ fn eval() Vals {
     return 0;
 }
 
-fn build_all_moves(color: Colors, moves: *Moves) u8 {
-    var freex: [30]isize = undefined;
-    var freey: [30]isize = undefined;
-    var freez: [30]isize = undefined;
+fn build_all_moves(color: Colors, moves: *Moves) usize {
+    var freex: [30]usize = undefined;
+    var freey: [30]usize = undefined;
+    var freez: [30]usize = undefined;
     var nb: usize = 0;
     for (0..3) |z| {
         const nz = z + 1;
@@ -106,11 +106,11 @@ fn build_all_moves(color: Colors, moves: *Moves) u8 {
             for (0..4 - z) |y| {
                 if (tab[x][y][z] == color) {
                     var ok = true;
-                    outer: for (-1..2) |dx| {
-                        for (-1..2) |dy| {
-                            if ((dx != 0) or (dy != 0)) {
-                                const nx = x + dx;
-                                const ny = y + dy;
+                    outer: for (0..3) |dx| {
+                        for (0..3) |dy| {
+                            if ((dx != 1) or (dy != 1)) {
+                                const nx = x + dx - 1;
+                                const ny = y + dy - 1;
                                 if ((nx >= 0) and (nx < 4 - nz) and (ny >= 0) and (ny < 4 - nz) and (tab[nx][ny][nz] != EMPTY)) {
                                     ok = false;
                                     break :outer;
@@ -134,7 +134,7 @@ fn build_all_moves(color: Colors, moves: *Moves) u8 {
     moves[0].ox = 0;
     moves[0].oy = 0;
     moves[0].oz = 0;
-    moves[0].rem = true;
+    moves[0].move = true;
 
     return 0;
 }
@@ -174,7 +174,7 @@ fn ab(
     var g: Vals = if (color == WHITE) Vals_min else Vals_max;
     var nhv: Sigs = undefined;
     var moves: Moves = undefined;
-    var nb: u8 = build_all_moves(color, &moves);
+    var nb: usize = build_all_moves(color, &moves);
     for (0..nb) |i| {
         const x = moves[i].x;
         const y = moves[i].y;
@@ -184,6 +184,17 @@ fn ab(
             nhv = hv ^ hashesw[x][y][z];
         } else {
             nhv = hv ^ hashesb[x][y][z];
+        }
+        if (moves[i].move) {
+            const ox = moves[i].x;
+            const oy = moves[i].y;
+            const oz = moves[i].z;
+            tab[ox][oy][oz] = EMPTY;
+            if (color == WHITE) {
+                nhv = hv ^ hashesw[ox][oy][oz];
+            } else {
+                nhv = hv ^ hashesb[ox][oy][oz];
+            }
         }
         const v = ab(a, b, -color, depth + 1, maxdepth, nhv);
         tab[x][y][z] = EMPTY;
