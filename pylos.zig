@@ -15,6 +15,20 @@ const Vals_max: Vals = std.math.maxInt(Vals);
 const Depth = u8;
 const Colors = u1;
 const Sigs = u64;
+// Level 0
+//  0  1  2  3
+//  4  5  6  7
+//  8  9 10 11
+// 12 13 14 15
+// Level 1
+// 16 17 18
+// 19 20 21
+// 22 23 24
+// Level 2
+// 25 26
+// 27 28
+// Level 3
+// 29
 // bit  0:15 level 0 white, 16:24 level 1 white, 25:28 level 2 white, 29: level 3 white
 // bit 32:47 level 0 black, 48:56 level 1 black, 57:60 level 2 black, 61: level 3 black
 const Move = u64;
@@ -117,7 +131,7 @@ fn updateab(color: Colors, depth: Depth, base: Depth, v: Vals, a: *Vals, b: *Val
 }
 
 fn eval(m: Move, c: Colors) Vals {
-    const mt = [2]u32{ @intCast(m & 0xffffffff), @intCast(m << 32) };
+    const mt = [2]u32{ @intCast(m & 0xffffffff), @intCast(m >> 32) };
     if (@popCount(mt[c]) == MAX_PAWNS) {
         if (c == WHITE) return -Win / 3 else return Win / 3;
     }
@@ -125,10 +139,20 @@ fn eval(m: Move, c: Colors) Vals {
 }
 
 fn gen_moves(m: Move, c: Colors, t: *Moves) usize {
-    //    const mt = [2]u32{ m & 0xffffffff, m << 32 };
-    t[0] = 0;
-    if ((m == 0) and (c == 0)) return 0;
-    return 0;
+    const mt = [2]u32{ @intCast(m & 0xffffffff), @intCast(m >> 32) };
+    const all = mt[0] | mt[1];
+    var nb: usize = 0;
+    const one: u64 = 1;
+    for (0..4 * 4) |i| {
+        const ni = @as(u5, @intCast(i));
+        if ((all & (one << ni)) == 0) {
+            const ni2: u6 = @as(u6, @intCast(if (c == WHITE) i else i + 32));
+            t[i] = m | (one << ni2);
+            print_pos(t[i]) catch unreachable;
+            nb += 1;
+        }
+    }
+    return nb;
 }
 
 var hit: u64 = 0;
@@ -178,6 +202,20 @@ fn ab(alp: Vals, bet: Vals, color: Colors, maxdepth: Depth, depth: Depth, base: 
 
 fn print_pos(m: Move) !void {
     try stderr.print("move={x}\n", .{m});
+    const mt = [2]u32{ @intCast(m & 0xffffffff), @intCast(m >> 32) };
+    //    const all = mt[0] | mt[1];
+    const one: u64 = 1;
+    for (0..16) |i| {
+        const ni = @as(u5, @intCast(i));
+        if ((mt[0] & (one << ni)) == 1) {
+            try stderr.print("X", .{});
+        } else if ((mt[1] & (one << ni)) == 1) {
+            try stderr.print("O", .{});
+        } else {
+            try stderr.print(".", .{});
+        }
+        if ((i % 4) == 3) try stderr.print("\n", .{});
+    }
 }
 
 pub fn main() !void {
@@ -220,7 +258,8 @@ pub fn main() !void {
             var total_time: i64 = 0;
             maxdepth = base + 1;
             ret = 0;
-            while ((total_time < 2000) and (@abs(ret) < Bwin)) {
+            //            while ((total_time < 2000) and (@abs(ret) < Bwin)) {
+            while ((maxdepth - base <= 2) and (@abs(ret) < Bwin)) {
                 best_move = InvalidMove;
                 t = std.time.milliTimestamp();
                 hit = 0;
