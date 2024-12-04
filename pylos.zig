@@ -32,6 +32,8 @@ const Sigs = u64;
 // bit  0:15 level 0 white, 16:24 level 1 white, 25:28 level 2 white, 29: level 3 white
 // bit 32:47 level 0 black, 48:56 level 1 black, 57:60 level 2 black, 61: level 3 black
 const Move = u64;
+const Move2 = packed struct { low: u32, high: u32 };
+const Move3 = [2]u32;
 const InvalidMove: Move = std.math.maxInt(Move);
 const Win = Vals_max - 1;
 const Bwin = Win - 1;
@@ -138,18 +140,65 @@ fn eval(m: Move, c: Colors) Vals {
     return 0;
 }
 
+const MaskB = [30][]u32;
+const MaskU = [30]u32;
+const MaskO = [30]u32;
+// mbs[i] is an array of all the masks of the squares that contains pos i
+var mbs: MaskB = undefined;
+// mus[i] is a mask of all positions under pos i
+// useful to know if it is possible to play a marble on i (all positions below must be occupied)
+var mus: MaskU = [_]u32{0} ** 30;
+// mos[i] is a mask of all positions over pos i
+// useful to know if a marble in i can be moved elsewhere (all positions over must be unoccupied)
+var mos: MaskO = [_]u32{0} ** 30;
+
+fn set_bits(n: u8, t: []u8) void {
+    const one: u32 = 1;
+    const nn = @as(u5, @intCast(n));
+    for (t) |v| {
+        const nv = @as(u5, @intCast(v));
+        mus[n] |= one << nv;
+        mos[v] |= one << nn;
+    }
+}
+
+fn init_squares() void {
+    //    const size: usize = (4 - l);
+    //    var base: usize = 0;
+    //    for (0..l) |j| {
+    //        base += (4 - j) * (4 - j);
+    //    }
+    set_bits(16, @constCast(&[_]u8{ 0, 1, 4, 5 }));
+    set_bits(17, @constCast(&[_]u8{ 1, 2, 5, 6 }));
+    set_bits(18, @constCast(&[_]u8{ 2, 3, 6, 7 }));
+    set_bits(19, @constCast(&[_]u8{ 4, 5, 8, 9 }));
+    set_bits(20, @constCast(&[_]u8{ 5, 6, 9, 10 }));
+    set_bits(21, @constCast(&[_]u8{ 6, 7, 10, 11 }));
+    set_bits(22, @constCast(&[_]u8{ 8, 9, 12, 13 }));
+    set_bits(23, @constCast(&[_]u8{ 9, 10, 13, 14 }));
+    set_bits(24, @constCast(&[_]u8{ 10, 11, 14, 15 }));
+
+    set_bits(25, @constCast(&[_]u8{ 16, 17, 19, 20 }));
+    set_bits(26, @constCast(&[_]u8{ 17, 18, 20, 21 }));
+    set_bits(27, @constCast(&[_]u8{ 19, 20, 22, 23 }));
+    set_bits(28, @constCast(&[_]u8{ 20, 21, 23, 24 }));
+
+    set_bits(29, @constCast(&[_]u8{ 25, 26, 27, 28 }));
+}
+
 fn gen_moves(m: Move, c: Colors, t: *Moves) usize {
     const mt = [2]u32{ @intCast(m & 0xffffffff), @intCast(m >> 32) };
     const all = mt[0] | mt[1];
     var nb: usize = 0;
     const one: u64 = 1;
-    for (0..4 * 4) |i| {
+    for (0..30) |i| {
         const ni = @as(u5, @intCast(i));
         if ((all & (one << ni)) == 0) {
-            const ni2: u6 = @as(u6, @intCast(if (c == WHITE) i else i + 32));
-            t[i] = m | (one << ni2);
-            print_pos(t[i]) catch unreachable;
-            nb += 1;
+            if ((i < 16) or ((mus[i] & all) == mus[i])) {
+                const ni2: u6 = @as(u6, @intCast(if (c == WHITE) i else i + 32));
+                t[i] = m | (one << ni2);
+                nb += 1;
+            }
         }
     }
     return nb;
@@ -191,6 +240,7 @@ fn ab(alp: Vals, bet: Vals, color: Colors, maxdepth: Depth, depth: Depth, base: 
         }
         var t: Moves = undefined;
         const nb = gen_moves(m, color, &t);
+        if (nb == 0) if (color == WHITE) return -Win else return Win;
         for (0..nb) |i| {
             const v = ab(a, b, oppcol, maxdepth, depth + 1, base, t[i]);
             if (updateab(color, depth, base, v, &a, &b, &g, t[i], &lmove)) break :outer;
@@ -200,21 +250,34 @@ fn ab(alp: Vals, bet: Vals, color: Colors, maxdepth: Depth, depth: Depth, base: 
     return g;
 }
 
+fn print_level(m: Move, l: usize) !void {
+    const mt = [2]u32{ @intCast(m & 0xffffffff), @intCast(m >> 32) };
+    //    const mt2: *Move3 = @ptrCast(@constCast(&m));
+    //    if (mt2[0] == mt[0]) try stderr.print("Ok\n", .{}) else try stderr.print("NOk\n", .{});
+    const one: u64 = 1;
+    const size: usize = (4 - l);
+    var base: usize = 0;
+    for (0..l) |j| {
+        base += (4 - j) * (4 - j);
+    }
+    try stderr.print("Level={d}\n", .{l});
+    for (0..size * size) |i| {
+        const ni = @as(u5, @intCast(i + base));
+        if ((mt[0] & (one << ni)) == 1) {
+            try stderr.print(" X", .{});
+        } else if ((mt[1] & (one << ni)) == 1) {
+            try stderr.print(" O", .{});
+        } else {
+            try stderr.print(" .", .{});
+        }
+        if ((i % size) == (size - 1)) try stderr.print("\n", .{});
+    }
+}
+
 fn print_pos(m: Move) !void {
     try stderr.print("move={x}\n", .{m});
-    const mt = [2]u32{ @intCast(m & 0xffffffff), @intCast(m >> 32) };
-    //    const all = mt[0] | mt[1];
-    const one: u64 = 1;
-    for (0..16) |i| {
-        const ni = @as(u5, @intCast(i));
-        if ((mt[0] & (one << ni)) == 1) {
-            try stderr.print("X", .{});
-        } else if ((mt[1] & (one << ni)) == 1) {
-            try stderr.print("O", .{});
-        } else {
-            try stderr.print(".", .{});
-        }
-        if ((i % 4) == 3) try stderr.print("\n", .{});
+    for (0..4) |i| {
+        try print_level(m, i);
     }
 }
 
@@ -225,6 +288,7 @@ pub fn main() !void {
     var turn = std.fmt.parseInt(u8, sturn, 10) catch 0;
     if ((turn != 1) and (turn != 2)) std.posix.exit(255);
 
+    init_squares();
     const allocator = std.heap.page_allocator;
     const RndGen = std.Random.DefaultPrng;
     hashes = try allocator.alloc(HashElem, HASH_SIZE);
