@@ -9,6 +9,9 @@ const stdin = std.io.getStdIn().reader();
 const stdout = std.io.getStdOut().writer();
 const stderr = std.io.getStdErr().writer();
 
+const o64: u64 = 1;
+const o32: u32 = 1;
+
 const USE_BMOVE: bool = false; // Looks like, for finding the shortest solution, it is better not to use bmove...
 
 // 27 bits use 2GB
@@ -158,12 +161,11 @@ var mus: MaskU = [_]u32{0} ** 30;
 var mos: MaskO = [_]u32{0} ** 30;
 
 fn set_bits(n: u8, t: []u8) void {
-    const one: u32 = 1;
     const nn = @as(u5, @intCast(n));
     for (t) |v| {
         const nv = @as(u5, @intCast(v));
-        mus[n] |= one << nv;
-        mos[v] |= one << nn;
+        mus[n] |= o32 << nv;
+        mos[v] |= o32 << nn;
     }
     for (t) |v| {
         mbs[v].append(mus[n]) catch unreachable;
@@ -190,6 +192,11 @@ fn init_squares() void {
     set_bits(28, @constCast(&[_]u8{ 20, 21, 23, 24 }));
 
     set_bits(29, @constCast(&[_]u8{ 25, 26, 27, 28 }));
+
+    //    for (mbs[9].items, 0..) |v, i| {
+    //        stderr.print("Pos:{d}\n", .{i}) catch unreachable;
+    //        print_pos(v) catch unreachable;
+    //    }
 }
 
 fn gen_moves(m: Move, c: Colors, t: *Moves) usize {
@@ -197,14 +204,13 @@ fn gen_moves(m: Move, c: Colors, t: *Moves) usize {
     const all = mt[0] | mt[1];
     const have_mar = (@popCount(mt[c]) < MAX_PAWNS);
     var nb: usize = 0;
-    const one: u64 = 1;
     for (0..30) |i| {
         const ni = @as(u5, @intCast(i));
-        if ((all & (one << ni)) == 0) {
+        if ((all & (o32 << ni)) == 0) {
             if ((i < 16) or ((mus[i] & all) == mus[i])) {
                 const ni2: u6 = @as(u6, @intCast(if (c == WHITE) i else i + 32));
                 if (have_mar) {
-                    t[i] = m | (one << ni2);
+                    t[i] = m | (o64 << ni2);
                     nb += 1;
                 }
             }
@@ -263,7 +269,6 @@ fn print_level(m: Move, l: usize) !void {
     const mt = [2]u32{ @intCast(m & 0xffffffff), @intCast(m >> 32) };
     //    const mt2: *Move3 = @ptrCast(@constCast(&m));
     //    if (mt2[0] == mt[0]) try stderr.print("Ok\n", .{}) else try stderr.print("NOk\n", .{});
-    const one: u64 = 1;
     const size: usize = (4 - l);
     var base: usize = 0;
     for (0..l) |j| {
@@ -272,9 +277,9 @@ fn print_level(m: Move, l: usize) !void {
     try stderr.print("Level={d}\n", .{l});
     for (0..size * size) |i| {
         const ni = @as(u5, @intCast(i + base));
-        if ((mt[0] & (one << ni)) == 1) {
+        if ((mt[0] & (o32 << ni)) != 0) {
             try stderr.print(" X", .{});
-        } else if ((mt[1] & (one << ni)) == 1) {
+        } else if ((mt[1] & (o32 << ni)) != 0) {
             try stderr.print(" O", .{});
         } else {
             try stderr.print(" .", .{});
@@ -284,7 +289,7 @@ fn print_level(m: Move, l: usize) !void {
 }
 
 fn print_pos(m: Move) !void {
-    try stderr.print("move={x}\n", .{m});
+    try stderr.print("pos={x}\n", .{m});
     for (0..4) |i| {
         try print_level(m, i);
     }
@@ -306,9 +311,8 @@ pub fn main() !void {
     var rnd = RndGen.init(0);
     for (0..NB_COLS) |i| {
         for (0..NB_LEVELS) |j| {
-            const one: usize = 1;
             const nj: u6 = @as(u6, @intCast(j * j));
-            const nb: usize = one << nj;
+            const nb: usize = o64 << nj;
             hashesv[i][j] = try allocator.alloc(Sigs, nb);
             for (0..nb) |k| {
                 hashesv[i][j][k] = rnd.random().int(Sigs);
