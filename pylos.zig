@@ -1,5 +1,10 @@
 const std = @import("std");
 
+//const allocator = std.heap.page_allocator;
+
+var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+const allocator = gpa.allocator();
+
 const stdin = std.io.getStdIn().reader();
 const stdout = std.io.getStdOut().writer();
 const stderr = std.io.getStdErr().writer();
@@ -140,7 +145,7 @@ fn eval(m: Move, c: Colors) Vals {
     return 0;
 }
 
-const MaskB = [30][]u32;
+const MaskB = [30]std.ArrayList(u32);
 const MaskU = [30]u32;
 const MaskO = [30]u32;
 // mbs[i] is an array of all the masks of the squares that contains pos i
@@ -160,14 +165,15 @@ fn set_bits(n: u8, t: []u8) void {
         mus[n] |= one << nv;
         mos[v] |= one << nn;
     }
+    for (t) |v| {
+        mbs[v].append(mus[n]) catch unreachable;
+    }
 }
 
 fn init_squares() void {
-    //    const size: usize = (4 - l);
-    //    var base: usize = 0;
-    //    for (0..l) |j| {
-    //        base += (4 - j) * (4 - j);
-    //    }
+    for (0..30) |i| {
+        mbs[i] = std.ArrayList(u32).init(allocator);
+    }
     set_bits(16, @constCast(&[_]u8{ 0, 1, 4, 5 }));
     set_bits(17, @constCast(&[_]u8{ 1, 2, 5, 6 }));
     set_bits(18, @constCast(&[_]u8{ 2, 3, 6, 7 }));
@@ -189,6 +195,7 @@ fn init_squares() void {
 fn gen_moves(m: Move, c: Colors, t: *Moves) usize {
     const mt = [2]u32{ @intCast(m & 0xffffffff), @intCast(m >> 32) };
     const all = mt[0] | mt[1];
+    const have_mar = (@popCount(mt[c]) < MAX_PAWNS);
     var nb: usize = 0;
     const one: u64 = 1;
     for (0..30) |i| {
@@ -196,8 +203,10 @@ fn gen_moves(m: Move, c: Colors, t: *Moves) usize {
         if ((all & (one << ni)) == 0) {
             if ((i < 16) or ((mus[i] & all) == mus[i])) {
                 const ni2: u6 = @as(u6, @intCast(if (c == WHITE) i else i + 32));
-                t[i] = m | (one << ni2);
-                nb += 1;
+                if (have_mar) {
+                    t[i] = m | (one << ni2);
+                    nb += 1;
+                }
             }
         }
     }
@@ -289,7 +298,7 @@ pub fn main() !void {
     if ((turn != 1) and (turn != 2)) std.posix.exit(255);
 
     init_squares();
-    const allocator = std.heap.page_allocator;
+
     const RndGen = std.Random.DefaultPrng;
     hashes = try allocator.alloc(HashElem, HASH_SIZE);
     defer allocator.free(hashes);
