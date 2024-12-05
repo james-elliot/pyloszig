@@ -210,7 +210,7 @@ fn gen_moves(m: Move, c: Colors, t: *Moves) usize {
             if ((i < 16) or ((mus[i] & all) == mus[i])) {
                 const ni2: u6 = @as(u6, @intCast(if (c == WHITE) i else i + 32));
                 if (have_mar) {
-                    t[i] = m | (o64 << ni2);
+                    t[nb] = m | (o64 << ni2);
                     nb += 1;
                 }
             }
@@ -232,13 +232,15 @@ fn ab(alp: Vals, bet: Vals, color: Colors, maxdepth: Depth, depth: Depth, base: 
     var v_inf: Vals = undefined;
     var v_sup: Vals = undefined;
     if (retrieve(hv, &v_inf, &v_sup, &bmove, maxdepth - depth)) {
-        if (depth == base) best_move = bmove;
-        if (v_inf == v_sup) return v_inf;
-        if (v_inf >= beta) return v_inf;
-        if (v_sup <= alpha) return v_sup;
-        alpha = @max(alpha, v_inf);
-        beta = @min(beta, v_sup);
-        hit += 1;
+        if (depth == 255) {
+            if (depth == base) best_move = bmove;
+            if (v_inf == v_sup) return v_inf;
+            if (v_inf >= beta) return v_inf;
+            if (v_sup <= alpha) return v_sup;
+            alpha = @max(alpha, v_inf);
+            beta = @min(beta, v_sup);
+            hit += 1;
+        }
     }
 
     if (!USE_BMOVE) bmove = InvalidMove;
@@ -256,9 +258,12 @@ fn ab(alp: Vals, bet: Vals, color: Colors, maxdepth: Depth, depth: Depth, base: 
         var t: Moves = undefined;
         const nb = gen_moves(m, color, &t);
         if (nb == 0) if (color == WHITE) return -Win else return Win;
+        stderr.print("nb={d}\n", .{nb}) catch unreachable;
         for (0..nb) |i| {
             const v = ab(a, b, oppcol, maxdepth, depth + 1, base, t[i]);
+            stderr.print("i={d} v={d} m={x}\n", .{ i, v, t[i] }) catch unreachable;
             if (updateab(color, depth, base, v, &a, &b, &g, t[i], &lmove)) break :outer;
+            stderr.print("a={d} b={d} g={d} best={x}\n", .{ a, b, g, best_move }) catch unreachable;
         }
     }
     store(hv, alpha, beta, g, maxdepth - depth, base, lmove);
@@ -276,6 +281,7 @@ fn print_level(m: Move, l: usize) !void {
     }
     try stderr.print("Level={d}\n", .{l});
     for (0..size * size) |i| {
+        if ((i % size) == 0) try stderr.print("{d:2}:", .{i + base + 1});
         const ni = @as(u5, @intCast(i + base));
         if ((mt[0] & (o32 << ni)) != 0) {
             try stderr.print(" X", .{});
@@ -325,7 +331,7 @@ pub fn main() !void {
     var t: i64 = undefined;
     var ret: Vals = undefined;
     var buf: [1000]u8 = undefined;
-    var oppmove: Move = undefined;
+    var oppmove: i64 = undefined;
     var color: Colors = undefined;
     var maxdepth: Depth = undefined;
     var m: Move = 0;
@@ -336,16 +342,19 @@ pub fn main() !void {
             maxdepth = base + 1;
             ret = 0;
             //            while ((total_time < 2000) and (@abs(ret) < Bwin)) {
-            while ((maxdepth - base <= 2) and (@abs(ret) < Bwin)) {
+            while ((maxdepth - base <= 1) and (@abs(ret) < Bwin)) {
                 best_move = InvalidMove;
                 t = std.time.milliTimestamp();
                 hit = 0;
                 nodes = 0;
                 ret = ab(Vals_min, Vals_max, color, maxdepth, base, base, m);
-                if (best_move == InvalidMove) break;
+                if (best_move == InvalidMove) {
+                    try stderr.print("Game Lost\n", .{});
+                    std.posix.exit(0);
+                }
                 t = std.time.milliTimestamp() - t;
                 total_time += t;
-                try stderr.print("depth={d} t={d}ms ret={d} nodes={d} hit={d} best_move={d}\n", .{ maxdepth - base, t, ret, nodes, hit, best_move });
+                try stderr.print("depth={d} t={d}ms ret={d} nodes={d} hit={d} best_move={x}\n", .{ maxdepth - base, t, ret, nodes, hit, best_move });
                 maxdepth += 1;
             }
             try print_pos(best_move);
@@ -354,13 +363,44 @@ pub fn main() !void {
             color = if (color == WHITE) BLACK else WHITE;
         }
         turn = 1;
-        while (true) {
-            try stderr.print("Your move:", .{});
-            if (try stdin.readUntilDelimiterOrEof(&buf, '\n')) |v| oppmove = std.fmt.parseInt(Move, v, 10) catch InvalidMove;
-            m = oppmove;
-            break;
+        var mt = [2]u32{ @intCast(m & 0xffffffff), @intCast(m >> 32) };
+        var newpos = m;
+        var moves: Moves = undefined;
+        const nb = gen_moves(m, color, &moves);
+        if (nb == 0) {
+            try stderr.print("Game Won\n", .{});
+            std.posix.exit(0);
         }
-        try print_pos(oppmove);
+        outer: while (true) {
+            while (true) {
+                try stderr.print("Your move:", .{});
+                if (try stdin.readUntilDelimiterOrEof(&buf, '\n')) |v| oppmove = std.fmt.parseInt(i64, v, 10) catch 64;
+                if (@abs(oppmove) < 31) break;
+            }
+            if (oppmove == 0) {
+                for (0..nb) |i| {
+                    if (newpos == moves[i]) {
+                        try stderr.print("Valid move\n", .{});
+                        break :outer;
+                    }
+                }
+                try stderr.print("Invalid move\n", .{});
+                mt = [2]u32{ @intCast(m & 0xffffffff), @intCast(m >> 32) };
+            } else if (oppmove < 0) {
+                oppmove += 1;
+                const move: u5 = @intCast(-oppmove);
+                if ((mt[color] & (o32 << move)) != 0) mt[color] ^= (o32 << move);
+            } else {
+                oppmove -= 1;
+                const move: u5 = @intCast(oppmove);
+                if (((mt[0] | mt[1]) & (o32 << move)) == 0) mt[color] ^= (o32 << move);
+            }
+            newpos = @as(u64, @intCast(mt[0])) | (@as(u64, @intCast(mt[1])) << 32);
+            try print_pos(newpos);
+        }
+        try stderr.print("Coucou\n", .{});
+        m = newpos;
+        try print_pos(m);
         base += 1;
         color = if (color == WHITE) BLACK else WHITE;
     }
