@@ -199,24 +199,36 @@ fn init_squares() void {
     //    }
 }
 
-fn gen_moves(m: Move, c: Colors, t: *Moves) usize {
+fn free_pos(m: u32, all: u32) u32 {
+    var f: u32 = 0;
+    while (m != 0) {
+        const i = @ctz(m);
+        m ^= (o32 << i);
+        if ((all & mos[i]) == 0) {
+            f |= (o32 << i);
+        }
+    }
+    return f;
+}
+
+fn gen_moves(m: Move, c: Colors, t: *Moves, nb: *usize) void {
     const mt = [2]u32{ @intCast(m & 0xffffffff), @intCast(m >> 32) };
     const all = mt[0] | mt[1];
-    const have_mar = (@popCount(mt[c]) < MAX_PAWNS);
-    var nb: usize = 0;
-    for (0..30) |i| {
-        const ni = @as(u5, @intCast(i));
-        if ((all & (o32 << ni)) == 0) {
-            if ((i < 16) or ((mus[i] & all) == mus[i])) {
-                const ni2: u6 = @as(u6, @intCast(if (c == WHITE) i else i + 32));
-                if (have_mar) {
-                    t[nb] = m | (o64 << ni2);
-                    nb += 1;
-                }
+    var nall = ~all & 0x3fffffff;
+    const have_mar = @popCount(mt[c]) < MAX_PAWNS;
+
+    nb.* = 0;
+    while (nall != 0) {
+        const i = @ctz(nall);
+        nall ^= (o32 << @as(u5, @intCast(i)));
+        if ((i < 16) or ((mus[i] & all) == mus[i])) {
+            if (have_mar) {
+                const ni2 = if (c == WHITE) i else i + 32;
+                t[nb.*] = m | (o64 << ni2);
+                nb.* += 1;
             }
         }
     }
-    return nb;
 }
 
 var hit: u64 = 0;
@@ -256,7 +268,8 @@ fn ab(alp: Vals, bet: Vals, color: Colors, maxdepth: Depth, depth: Depth, base: 
             if (updateab(color, depth, base, v, &a, &b, &g, bmove, &lmove)) break :outer;
         }
         var t: Moves = undefined;
-        const nb = gen_moves(m, color, &t);
+        var nb: usize = undefined;
+        gen_moves(m, color, &t, &nb);
         if (nb == 0) if (color == WHITE) return -Win else return Win;
         stderr.print("nb={d}\n", .{nb}) catch unreachable;
         for (0..nb) |i| {
@@ -366,7 +379,8 @@ pub fn main() !void {
         var mt = [2]u32{ @intCast(m & 0xffffffff), @intCast(m >> 32) };
         var newpos = m;
         var moves: Moves = undefined;
-        const nb = gen_moves(m, color, &moves);
+        var nb: usize = undefined;
+        gen_moves(m, color, &moves, &nb);
         if (nb == 0) {
             try stderr.print("Game Won\n", .{});
             std.posix.exit(0);
