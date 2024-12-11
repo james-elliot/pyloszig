@@ -12,7 +12,8 @@ const stderr = std.io.getStdErr().writer();
 const o64: u64 = 1;
 const o32: u32 = 1;
 
-const USE_BMOVE: bool = false; // Looks like, for finding the shortest solution, it is better not to use bmove...
+// Looks like, for finding the shortest solution, it is better not to use bmove...
+const USE_BMOVE: bool = false;
 
 // 27 bits use 2GB
 const NB_BITS: u8 = 25;
@@ -201,9 +202,10 @@ fn init_squares() void {
 
 fn free_pos(m: u32, all: u32) u32 {
     var f: u32 = 0;
-    while (m != 0) {
-        const i = @ctz(m);
-        m ^= (o32 << i);
+    var vm = m;
+    while (vm != 0) {
+        const i = @as(u5, @intCast(@ctz(vm)));
+        vm ^= (o32 << i);
         if ((all & mos[i]) == 0) {
             f |= (o32 << i);
         }
@@ -211,21 +213,34 @@ fn free_pos(m: u32, all: u32) u32 {
     return f;
 }
 
-fn gen_moves(m: Move, c: Colors, t: *Moves, nb: *usize) void {
+fn gen_moves(m: Move, c: Colors, tb: *Moves, nb: *usize, tg: *Moves, ng: *usize) void {
     const mt = [2]u32{ @intCast(m & 0xffffffff), @intCast(m >> 32) };
     const all = mt[0] | mt[1];
     var nall = ~all & 0x3fffffff;
     const have_mar = @popCount(mt[c]) < MAX_PAWNS;
+    const free = free_pos(mt[c], all);
 
     nb.* = 0;
+    ng.* = 0;
     while (nall != 0) {
         const i = @ctz(nall);
         nall ^= (o32 << @as(u5, @intCast(i)));
         if ((i < 16) or ((mus[i] & all) == mus[i])) {
+            const ni2 = if (c == WHITE) i else i + 32;
             if (have_mar) {
-                const ni2 = if (c == WHITE) i else i + 32;
-                t[nb.*] = m | (o64 << ni2);
+                tb[nb.*] = m | (o64 << ni2);
                 nb.* += 1;
+            }
+            if (i >= 16) {
+                //Attention a penser à ne pas prendre les billes du carré elles-mêmes
+                var f = free;
+                while (f != 0) {
+                    const j = @ctz(f);
+                    f ^= o32 << @as(u5, @intCast(j));
+                    const nj = if (c == WHITE) j else j + 32;
+                    tg[ng.*] = (m ^ (o64 << nj)) | (o64 << ni2);
+                    ng.* += 1;
+                }
             }
         }
     }
@@ -269,7 +284,9 @@ fn ab(alp: Vals, bet: Vals, color: Colors, maxdepth: Depth, depth: Depth, base: 
         }
         var t: Moves = undefined;
         var nb: usize = undefined;
-        gen_moves(m, color, &t, &nb);
+        var tg: Moves = undefined;
+        var ng: usize = undefined;
+        gen_moves(m, color, &t, &nb, &tg, &ng);
         if (nb == 0) if (color == WHITE) return -Win else return Win;
         stderr.print("nb={d}\n", .{nb}) catch unreachable;
         for (0..nb) |i| {
@@ -285,10 +302,13 @@ fn ab(alp: Vals, bet: Vals, color: Colors, maxdepth: Depth, depth: Depth, base: 
 
 fn print_level(m: Move, l: usize) !void {
     const mt = [2]u32{ @intCast(m & 0xffffffff), @intCast(m >> 32) };
+    const all = mt[0] | mt[1];
     //    const mt2: *Move3 = @ptrCast(@constCast(&m));
     //    if (mt2[0] == mt[0]) try stderr.print("Ok\n", .{}) else try stderr.print("NOk\n", .{});
     const size: usize = (4 - l);
     var base: usize = 0;
+    const freew = free_pos(mt[0], all);
+    const freeb = free_pos(mt[1], all);
     for (0..l) |j| {
         base += (4 - j) * (4 - j);
     }
@@ -297,9 +317,9 @@ fn print_level(m: Move, l: usize) !void {
         if ((i % size) == 0) try stderr.print("{d:2}:", .{i + base + 1});
         const ni = @as(u5, @intCast(i + base));
         if ((mt[0] & (o32 << ni)) != 0) {
-            try stderr.print(" X", .{});
+            if ((freew & (o32 << ni)) != 0) try stderr.print(" X", .{}) else try stderr.print(" x", .{});
         } else if ((mt[1] & (o32 << ni)) != 0) {
-            try stderr.print(" O", .{});
+            if ((freeb & (o32 << ni)) != 0) try stderr.print(" O", .{}) else try stderr.print(" o", .{});
         } else {
             try stderr.print(" .", .{});
         }
@@ -378,9 +398,11 @@ pub fn main() !void {
         turn = 1;
         var mt = [2]u32{ @intCast(m & 0xffffffff), @intCast(m >> 32) };
         var newpos = m;
-        var moves: Moves = undefined;
+        var tb: Moves = undefined;
         var nb: usize = undefined;
-        gen_moves(m, color, &moves, &nb);
+        var tg: Moves = undefined;
+        var ng: usize = undefined;
+        gen_moves(m, color, &tb, &nb, &tg, &ng);
         if (nb == 0) {
             try stderr.print("Game Won\n", .{});
             std.posix.exit(0);
@@ -393,7 +415,7 @@ pub fn main() !void {
             }
             if (oppmove == 0) {
                 for (0..nb) |i| {
-                    if (newpos == moves[i]) {
+                    if (newpos == tb[i]) {
                         try stderr.print("Valid move\n", .{});
                         break :outer;
                     }
