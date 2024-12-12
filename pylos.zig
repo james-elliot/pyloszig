@@ -146,7 +146,7 @@ fn eval(m: Move, c: Colors) Vals {
     if (@popCount(mt[c]) == MAX_PAWNS) {
         if (c == WHITE) return -Win / 3 else return Win / 3;
     }
-    return @popCount(mt[1]) - @popCount(mt[0]);
+    return @as(Vals, @popCount(mt[1])) - @as(Vals, @popCount(mt[0]));
 }
 
 const MaskB = [30]std.ArrayList(u32);
