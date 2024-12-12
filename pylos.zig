@@ -146,7 +146,7 @@ fn eval(m: Move, c: Colors) Vals {
     if (@popCount(mt[c]) == MAX_PAWNS) {
         if (c == WHITE) return -Win / 3 else return Win / 3;
     }
-    return 0;
+    return @popCount(mt[1]) - @popCount(mt[0]);
 }
 
 const MaskB = [30]std.ArrayList(u32);
@@ -233,13 +233,17 @@ fn gen_moves(m: Move, c: Colors, tb: *Moves, nb: *usize, tg: *Moves, ng: *usize)
             }
             if (i >= 16) {
                 //Attention a penser à ne pas prendre les billes du carré elles-mêmes
-                var f = free;
+                var f = free & ~mus[i];
                 while (f != 0) {
                     const j = @ctz(f);
                     f ^= o32 << @as(u5, @intCast(j));
-                    const nj = if (c == WHITE) j else j + 32;
-                    tg[ng.*] = (m ^ (o64 << nj)) | (o64 << ni2);
-                    ng.* += 1;
+                    // Marble must go one level up
+                    if ((j <= 15) or ((i >= 25) and (j <= 24)) or (i == 29)) {
+                        // stderr.print("i:{d} j:{d}\n", .{ i, j }) catch unreachable;
+                        const nj = if (c == WHITE) j else j + 32;
+                        tg[ng.*] = (m ^ (o64 << nj)) | (o64 << ni2);
+                        ng.* += 1;
+                    }
                 }
             }
         }
@@ -282,18 +286,20 @@ fn ab(alp: Vals, bet: Vals, color: Colors, maxdepth: Depth, depth: Depth, base: 
             const v = ab(a, b, oppcol, maxdepth, depth + 1, base, bmove);
             if (updateab(color, depth, base, v, &a, &b, &g, bmove, &lmove)) break :outer;
         }
-        var t: Moves = undefined;
+        var tb: Moves = undefined;
         var nb: usize = undefined;
         var tg: Moves = undefined;
         var ng: usize = undefined;
-        gen_moves(m, color, &t, &nb, &tg, &ng);
-        if (nb == 0) if (color == WHITE) return -Win else return Win;
-        stderr.print("nb={d}\n", .{nb}) catch unreachable;
+        gen_moves(m, color, &tb, &nb, &tg, &ng);
+        if ((nb + ng) == 0) if (color == WHITE) return -Win else return Win;
+        stderr.print("nb={d}ng={d}\n", .{ nb, ng }) catch unreachable;
+        for (0..ng) |i| {
+            const v = ab(a, b, oppcol, maxdepth, depth + 1, base, tg[i]);
+            if (updateab(color, depth, base, v, &a, &b, &g, tg[i], &lmove)) break :outer;
+        }
         for (0..nb) |i| {
-            const v = ab(a, b, oppcol, maxdepth, depth + 1, base, t[i]);
-            stderr.print("i={d} v={d} m={x}\n", .{ i, v, t[i] }) catch unreachable;
-            if (updateab(color, depth, base, v, &a, &b, &g, t[i], &lmove)) break :outer;
-            stderr.print("a={d} b={d} g={d} best={x}\n", .{ a, b, g, best_move }) catch unreachable;
+            const v = ab(a, b, oppcol, maxdepth, depth + 1, base, tb[i]);
+            if (updateab(color, depth, base, v, &a, &b, &g, tb[i], &lmove)) break :outer;
         }
     }
     store(hv, alpha, beta, g, maxdepth - depth, base, lmove);
@@ -403,7 +409,10 @@ pub fn main() !void {
         var tg: Moves = undefined;
         var ng: usize = undefined;
         gen_moves(m, color, &tb, &nb, &tg, &ng);
-        if (nb == 0) {
+        if (ng != 0) {
+            try stderr.print("Good moves:{d}\n", .{ng});
+        }
+        if ((nb + ng) == 0) {
             try stderr.print("Game Won\n", .{});
             std.posix.exit(0);
         }
@@ -416,6 +425,12 @@ pub fn main() !void {
             if (oppmove == 0) {
                 for (0..nb) |i| {
                     if (newpos == tb[i]) {
+                        try stderr.print("Valid move\n", .{});
+                        break :outer;
+                    }
+                }
+                for (0..ng) |i| {
+                    if (newpos == tg[i]) {
                         try stderr.print("Valid move\n", .{});
                         break :outer;
                     }
