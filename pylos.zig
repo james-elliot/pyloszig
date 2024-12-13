@@ -12,9 +12,8 @@ const stderr = std.io.getStdErr().writer();
 const o64: u64 = 1;
 const o32: u32 = 1;
 
-// Looks like, for finding the shortest solution, it is better not to use bmove...
+const USE_HASH: bool = true;
 const USE_BMOVE: bool = false;
-
 // 27 bits use 2GB
 const NB_BITS: u8 = 25;
 
@@ -43,6 +42,7 @@ const Sigs = u64;
 const Move = u64;
 const Move2 = packed struct { low: u32, high: u32 };
 const Move3 = [2]u32;
+const Move4 = [4]u16;
 const InvalidMove: Move = std.math.maxInt(Move);
 const Win = Vals_max - 1;
 const Bwin = Win - 1;
@@ -55,8 +55,9 @@ const MAX_PAWNS: u64 = 15;
 
 const HASH_SIZE: usize = 1 << NB_BITS;
 const HASH_MASK: Sigs = HASH_SIZE - 1;
-var hashesv: [NB_COLS][NB_LEVELS][]Sigs = undefined;
+var hashesv: [4][1 << 16]Sigs = undefined;
 var hash_black: Sigs = undefined;
+var hash_init: Sigs = undefined;
 
 const HashElem = packed struct {
     sig: Sigs,
@@ -85,8 +86,7 @@ fn retrieve(hv: Sigs, v_inf: *Vals, v_sup: *Vals, bmove: *Move, dist: Depth) boo
         if (hashes[ind].dist == dist) {
             v_inf.* = hashes[ind].v_inf;
             v_sup.* = hashes[ind].v_sup;
-            //            return true;
-            return false;
+            return true;
         }
     }
     return false;
@@ -115,10 +115,9 @@ fn store(hv: Sigs, alpha: Vals, beta: Vals, g: Vals, dist: Depth, base: Depth, b
 }
 
 fn compute_hash(m: Move, color: Colors) Sigs {
-    //    var h: Sigs = 0;
-    if (m == 0) return 0;
-    if (color == 0) return 0;
-    return 0;
+    const p: *Move4 = @ptrCast(@constCast(&m));
+    const v = hash_init ^ hashesv[0][p[0]] ^ hashesv[1][p[1]] ^ hashesv[2][p[2]] ^ hashesv[3][p[3]];
+    if (color == WHITE) return v else return v ^ hash_black;
 }
 
 var best_move: Move = undefined;
@@ -262,19 +261,16 @@ fn ab(alp: Vals, bet: Vals, color: Colors, maxdepth: Depth, depth: Depth, base: 
     const hv = compute_hash(m, color);
     var v_inf: Vals = undefined;
     var v_sup: Vals = undefined;
-    if (retrieve(hv, &v_inf, &v_sup, &bmove, maxdepth - depth)) {
-        if (depth == 255) {
-            if (depth == base) best_move = bmove;
-            if (v_inf == v_sup) return v_inf;
-            if (v_inf >= beta) return v_inf;
-            if (v_sup <= alpha) return v_sup;
-            alpha = @max(alpha, v_inf);
-            beta = @min(beta, v_sup);
-            hit += 1;
-        }
+    if (USE_HASH and (retrieve(hv, &v_inf, &v_sup, &bmove, maxdepth - depth))) {
+        if (depth == base) best_move = bmove;
+        if (v_inf == v_sup) return v_inf;
+        if (v_inf >= beta) return v_inf;
+        if (v_sup <= alpha) return v_sup;
+        alpha = @max(alpha, v_inf);
+        beta = @min(beta, v_sup);
+        hit += 1;
+        if (!USE_BMOVE) bmove = InvalidMove;
     }
-
-    if (!USE_BMOVE) bmove = InvalidMove;
 
     var a = alpha;
     var b = beta;
@@ -291,15 +287,18 @@ fn ab(alp: Vals, bet: Vals, color: Colors, maxdepth: Depth, depth: Depth, base: 
         var tg: Moves = undefined;
         var ng: usize = undefined;
         gen_moves(m, color, &tb, &nb, &tg, &ng);
-        if ((nb + ng) == 0) if (color == WHITE) return -Win else return Win;
-        stderr.print("nb={d}ng={d}\n", .{ nb, ng }) catch unreachable;
+        if ((nb + ng) == 0) if (color == WHITE) return -Win + depth else return Win - depth;
         for (0..ng) |i| {
-            const v = ab(a, b, oppcol, maxdepth, depth + 1, base, tg[i]);
-            if (updateab(color, depth, base, v, &a, &b, &g, tg[i], &lmove)) break :outer;
+            if (tg[i] != bmove) {
+                const v = ab(a, b, oppcol, maxdepth, depth + 1, base, tg[i]);
+                if (updateab(color, depth, base, v, &a, &b, &g, tg[i], &lmove)) break :outer;
+            }
         }
         for (0..nb) |i| {
-            const v = ab(a, b, oppcol, maxdepth, depth + 1, base, tb[i]);
-            if (updateab(color, depth, base, v, &a, &b, &g, tb[i], &lmove)) break :outer;
+            if (tb[i] != bmove) {
+                const v = ab(a, b, oppcol, maxdepth, depth + 1, base, tb[i]);
+                if (updateab(color, depth, base, v, &a, &b, &g, tb[i], &lmove)) break :outer;
+            }
         }
     }
     store(hv, alpha, beta, g, maxdepth - depth, base, lmove);
@@ -354,17 +353,13 @@ pub fn main() !void {
     defer allocator.free(hashes);
     for (hashes) |*a| a.* = ZHASH;
     var rnd = RndGen.init(0);
-    for (0..NB_COLS) |i| {
-        for (0..NB_LEVELS) |j| {
-            const nj: u6 = @as(u6, @intCast(j * j));
-            const nb: usize = o64 << nj;
-            hashesv[i][j] = try allocator.alloc(Sigs, nb);
-            for (0..nb) |k| {
-                hashesv[i][j][k] = rnd.random().int(Sigs);
-            }
+    for (0..4) |i| {
+        for (0..1 << 16) |j| {
+            hashesv[i][j] = rnd.random().int(Sigs);
         }
     }
     hash_black = rnd.random().int(Sigs);
+    hash_init = rnd.random().int(Sigs);
 
     var base: Depth = 0;
     var t: i64 = undefined;
@@ -380,8 +375,8 @@ pub fn main() !void {
             var total_time: i64 = 0;
             maxdepth = base + 1;
             ret = 0;
-            //            while ((total_time < 2000) and (@abs(ret) < Bwin)) {
-            while ((maxdepth - base <= 1) and (@abs(ret) < Bwin)) {
+            while ((total_time < 2000) and (@abs(ret) < Bwin)) {
+                //while ((maxdepth - base <= 1) and (@abs(ret) < Bwin)) {
                 best_move = InvalidMove;
                 t = std.time.milliTimestamp();
                 hit = 0;
@@ -449,7 +444,6 @@ pub fn main() !void {
             newpos = @as(u64, @intCast(mt[0])) | (@as(u64, @intCast(mt[1])) << 32);
             try print_pos(newpos);
         }
-        try stderr.print("Coucou\n", .{});
         m = newpos;
         try print_pos(m);
         base += 1;
