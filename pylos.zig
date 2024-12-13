@@ -44,13 +44,13 @@ const Move2 = packed struct { low: u32, high: u32 };
 const Move3 = [2]u32;
 const Move4 = [4]u16;
 const InvalidMove: Move = std.math.maxInt(Move);
-const Win = Vals_max - 1;
-const Bwin = Win - 1;
+const Win = 32700;
+const Bwin = 32600;
 const WHITE: Colors = 0;
 const BLACK: Colors = 1;
 const NB_COLS: usize = @as(usize, @intCast(BLACK)) + 1;
 const NB_LEVELS: usize = 4;
-const Moves = [64]Move;
+const Moves = [256]Move;
 const MAX_PAWNS: u64 = 15;
 
 const HASH_SIZE: usize = 1 << NB_BITS;
@@ -142,10 +142,11 @@ fn updateab(color: Colors, depth: Depth, base: Depth, v: Vals, a: *Vals, b: *Val
 
 fn eval(m: Move, c: Colors) Vals {
     const mt = [2]u32{ @intCast(m & 0xffffffff), @intCast(m >> 32) };
+    const v = @as(Vals, @popCount(mt[1])) - @as(Vals, @popCount(mt[0]));
     if (@popCount(mt[c]) == MAX_PAWNS) {
-        if (c == WHITE) return -Win / 3 else return Win / 3;
+        if (c == WHITE) return v - Win / 3 else return v + Win / 3;
     }
-    return @as(Vals, @popCount(mt[1])) - @as(Vals, @popCount(mt[0]));
+    return v;
 }
 
 const MaskB = [30]std.ArrayList(u32);
@@ -212,28 +213,57 @@ fn free_pos(m: u32, all: u32) u32 {
     return f;
 }
 
-fn gen_dbsquare(p: usize, mc: u32, m: Move, free: u32, t: *Moves, n: *usize, c: Colors) void {
-    for (mbs[p].items) |v| {
-        if (v & mc == v) {
-            var mask = v & free;
+//Check if marble of color c put at pos p which has generated position m makes one (or more) "same color" squares
+fn gen_dbsquare(c: Colors, p: usize, m: Move, t: *Moves, n: *usize) void {
+    const mt = [2]u32{ @intCast(m & 0xffffffff), @intCast(m >> 32) };
+    var free: ?u32 = null;
+    const oldn = n.*;
+    for (mbs[p].items) |v| outer: {
+        if (v & mt[c] == v) {
+            if (free == null) free = free_pos(mt[c], mt[0] | mt[1]);
+            var mask: u32 = v & free.?;
             while (mask != 0) {
                 const i = @ctz(mask);
                 mask ^= (o32 << @as(u5, @intCast(i)));
                 const ni = if (c == WHITE) i else i + 32;
                 t[n.*] = (m ^ (o64 << ni));
                 n.* += 1;
+                if (n.* == t.len) break :outer;
+                var mask2 = mask;
+                while (mask2 != 0) {
+                    const j = @ctz(mask2);
+                    mask2 ^= (o32 << @as(u5, @intCast(j)));
+                    const nj = if (c == WHITE) j else j + 32;
+                    t[n.*] = m ^ (o64 << ni) ^ (o64 << nj);
+                    n.* += 1;
+                    if (n.* == t.len) break :outer;
+                }
             }
         }
     }
+    if (n.* == t.len) {
+        stderr.print("p={d} c={d}\n", .{ p, c }) catch unreachable;
+        for (mbs[p].items) |v| {
+            stderr.print("v={x} {x} {x}\n", .{ v, (v & mt[c]), (v & free.?) }) catch unreachable;
+        }
+        print_pos(m) catch unreachable;
+        stderr.print("vgggggggg\n", .{}) catch unreachable;
+        for (t, 0..) |v, i| {
+            if (i >= oldn) {
+                print_pos(v) catch unreachable;
+            }
+        }
+        std.posix.exit(255);
+    }
 }
 
-fn gen_moves(m: Move, c: Colors, tb: *Moves, nb: *usize, tg: *Moves, ng: *usize) void {
+fn gen_moves(m: Move, c: Colors, tb: *Moves, nb: *usize, tg: *Moves, ng: *usize, tv: *Moves, nv: *usize) void {
     const mt = [2]u32{ @intCast(m & 0xffffffff), @intCast(m >> 32) };
     const all = mt[0] | mt[1];
     var nall = ~all & 0x3fffffff;
     const have_mar = @popCount(mt[c]) < MAX_PAWNS;
     const free = free_pos(mt[c], all);
-
+    nv.* = 0;
     nb.* = 0;
     ng.* = 0;
     while (nall != 0) {
@@ -242,8 +272,10 @@ fn gen_moves(m: Move, c: Colors, tb: *Moves, nb: *usize, tg: *Moves, ng: *usize)
         if ((i < 16) or ((mus[i] & all) == mus[i])) {
             const ni2 = if (c == WHITE) i else i + 32;
             if (have_mar) {
-                tb[nb.*] = m | (o64 << ni2);
+                const nm = m | (o64 << ni2);
+                tb[nb.*] = nm;
                 nb.* += 1;
+                gen_dbsquare(c, i, nm, tv, nv);
             }
             if (i >= 16) {
                 //Attention a penser à ne pas prendre les billes du carré elles-mêmes
@@ -255,8 +287,10 @@ fn gen_moves(m: Move, c: Colors, tb: *Moves, nb: *usize, tg: *Moves, ng: *usize)
                     if ((j <= 15) or ((i >= 25) and (j <= 24)) or (i == 29)) {
                         // stderr.print("i:{d} j:{d}\n", .{ i, j }) catch unreachable;
                         const nj = if (c == WHITE) j else j + 32;
-                        tg[ng.*] = (m ^ (o64 << nj)) | (o64 << ni2);
+                        const nm2 = (m ^ (o64 << nj)) | (o64 << ni2);
+                        tg[ng.*] = nm2;
                         ng.* += 1;
+                        gen_dbsquare(c, i, nm2, tv, nv);
                     }
                 }
             }
@@ -301,8 +335,20 @@ fn ab(alp: Vals, bet: Vals, color: Colors, maxdepth: Depth, depth: Depth, base: 
         var nb: usize = undefined;
         var tg: Moves = undefined;
         var ng: usize = undefined;
-        gen_moves(m, color, &tb, &nb, &tg, &ng);
-        if ((nb + ng) == 0) if (color == WHITE) return -Win + depth else return Win - depth;
+        var tv: Moves = undefined;
+        var nv: usize = undefined;
+        gen_moves(m, color, &tb, &nb, &tg, &ng, &tv, &nv);
+        if ((nb + ng) == 0) {
+            const mt = [2]u32{ @intCast(m & 0xffffffff), @intCast(m >> 32) };
+            const v = @as(Vals, @popCount(mt[1])) - @as(Vals, @popCount(mt[0]));
+            if (color == WHITE) return -Win + v else return Win + v;
+        }
+        for (0..nv) |i| {
+            if (tv[i] != bmove) {
+                const v = ab(a, b, oppcol, maxdepth, depth + 1, base, tv[i]);
+                if (updateab(color, depth, base, v, &a, &b, &g, tv[i], &lmove)) break :outer;
+            }
+        }
         for (0..ng) |i| {
             if (tg[i] != bmove) {
                 const v = ab(a, b, oppcol, maxdepth, depth + 1, base, tg[i]);
@@ -418,7 +464,9 @@ pub fn main() !void {
         var nb: usize = undefined;
         var tg: Moves = undefined;
         var ng: usize = undefined;
-        gen_moves(m, color, &tb, &nb, &tg, &ng);
+        var tv: Moves = undefined;
+        var nv: usize = undefined;
+        gen_moves(m, color, &tb, &nb, &tg, &ng, &tv, &nv);
         if (ng != 0) {
             try stderr.print("Good moves:{d}\n", .{ng});
         }
