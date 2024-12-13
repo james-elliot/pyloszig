@@ -212,6 +212,21 @@ fn free_pos(m: u32, all: u32) u32 {
     return f;
 }
 
+fn gen_dbsquare(p: usize, mc: u32, m: Move, free: u32, t: *Moves, n: *usize, c: Colors) void {
+    for (mbs[p].items) |v| {
+        if (v & mc == v) {
+            var mask = v & free;
+            while (mask != 0) {
+                const i = @ctz(mask);
+                mask ^= (o32 << @as(u5, @intCast(i)));
+                const ni = if (c == WHITE) i else i + 32;
+                t[n.*] = (m ^ (o64 << ni));
+                n.* += 1;
+            }
+        }
+    }
+}
+
 fn gen_moves(m: Move, c: Colors, tb: *Moves, nb: *usize, tg: *Moves, ng: *usize) void {
     const mt = [2]u32{ @intCast(m & 0xffffffff), @intCast(m >> 32) };
     const all = mt[0] | mt[1];
