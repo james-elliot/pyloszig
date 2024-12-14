@@ -13,7 +13,7 @@ const o64: u64 = 1;
 const o32: u32 = 1;
 
 const USE_HASH: bool = true;
-const USE_BMOVE: bool = false;
+const USE_BMOVE: bool = true;
 // 27 bits use 2GB
 const NB_BITS: u8 = 25;
 
@@ -226,9 +226,6 @@ fn gen_dbsquare(c: Colors, p: usize, m: Move, t: *Moves, n: *usize) void {
                 const i = @ctz(mask);
                 mask ^= (o32 << @as(u5, @intCast(i)));
                 const ni = if (c == WHITE) i else i + 32;
-                t[n.*] = (m ^ (o64 << ni));
-                n.* += 1;
-                if (n.* == t.len) break :outer;
                 var mask2 = mask;
                 while (mask2 != 0) {
                     const j = @ctz(mask2);
@@ -238,6 +235,9 @@ fn gen_dbsquare(c: Colors, p: usize, m: Move, t: *Moves, n: *usize) void {
                     n.* += 1;
                     if (n.* == t.len) break :outer;
                 }
+                t[n.*] = (m ^ (o64 << ni));
+                n.* += 1;
+                if (n.* == t.len) break :outer;
             }
         }
     }
