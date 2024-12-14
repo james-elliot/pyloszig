@@ -193,11 +193,6 @@ fn init_squares() void {
     set_bits(28, @constCast(&[_]u8{ 20, 21, 23, 24 }));
 
     set_bits(29, @constCast(&[_]u8{ 25, 26, 27, 28 }));
-
-    //    for (mbs[9].items, 0..) |v, i| {
-    //        stderr.print("Pos:{d}\n", .{i}) catch unreachable;
-    //        print_pos(v) catch unreachable;
-    //    }
 }
 
 fn free_pos(m: u32, all: u32) u32 {
@@ -215,9 +210,11 @@ fn free_pos(m: u32, all: u32) u32 {
 
 //Check if marble of color c put at pos p which has generated position m makes one (or more) "same color" squares
 fn gen_dbsquare(c: Colors, p: usize, m: Move, t: *Moves, n: *usize) void {
+    //    if (c < 2) return;
     const mt = [2]u32{ @intCast(m & 0xffffffff), @intCast(m >> 32) };
     var free: ?u32 = null;
-    const oldn = n.*;
+    var n0: usize = 0;
+    var t0: Moves = undefined;
     for (mbs[p].items) |v| outer: {
         if (v & mt[c] == v) {
             if (free == null) free = free_pos(mt[c], mt[0] | mt[1]);
@@ -235,25 +232,18 @@ fn gen_dbsquare(c: Colors, p: usize, m: Move, t: *Moves, n: *usize) void {
                     n.* += 1;
                     if (n.* == t.len) break :outer;
                 }
-                t[n.*] = (m ^ (o64 << ni));
-                n.* += 1;
-                if (n.* == t.len) break :outer;
+                t0[n0] = (m ^ (o64 << ni));
+                n0 += 1;
             }
         }
     }
-    if (n.* == t.len) {
+    if ((n0 + n.*) >= t.len) {
         stderr.print("p={d} c={d}\n", .{ p, c }) catch unreachable;
-        for (mbs[p].items) |v| {
-            stderr.print("v={x} {x} {x}\n", .{ v, (v & mt[c]), (v & free.?) }) catch unreachable;
-        }
-        print_pos(m) catch unreachable;
-        stderr.print("vgggggggg\n", .{}) catch unreachable;
-        for (t, 0..) |v, i| {
-            if (i >= oldn) {
-                print_pos(v) catch unreachable;
-            }
-        }
         std.posix.exit(255);
+    }
+    for (0..n0) |i| {
+        t[n.*] = t0[i];
+        n.* += 1;
     }
 }
 
