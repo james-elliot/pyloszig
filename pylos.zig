@@ -13,7 +13,7 @@ const o64: u64 = 1;
 const o32: u32 = 1;
 
 const USE_HASH: bool = true;
-const USE_BMOVE: bool = true;
+const USE_BMOVE: bool = false;
 // 27 bits use 2GB
 const NB_BITS: u8 = 25;
 
@@ -249,9 +249,10 @@ fn gen_dbsquare(c: Colors, p: usize, m: Move, t: *Moves, n: *usize) void {
 
 fn gen_moves(m: Move, c: Colors, tb: *Moves, nb: *usize, tg: *Moves, ng: *usize, tv: *Moves, nv: *usize) void {
     const mt = [2]u32{ @intCast(m & 0xffffffff), @intCast(m >> 32) };
+    //const mt: *Move3 = @ptrCast(@constCast(&m));
     const all = mt[0] | mt[1];
     var nall = ~all & 0x3fffffff;
-    const have_mar = @popCount(mt[c]) < MAX_PAWNS;
+    const have_marbles = @popCount(mt[c]) < MAX_PAWNS;
     const free = free_pos(mt[c], all);
     nv.* = 0;
     nb.* = 0;
@@ -261,7 +262,7 @@ fn gen_moves(m: Move, c: Colors, tb: *Moves, nb: *usize, tg: *Moves, ng: *usize,
         nall ^= (o32 << @as(u5, @intCast(i)));
         if ((i < 16) or ((mus[i] & all) == mus[i])) {
             const ni2 = if (c == WHITE) i else i + 32;
-            if (have_mar) {
+            if (have_marbles) {
                 const nm = m | (o64 << ni2);
                 tb[nb.*] = nm;
                 nb.* += 1;
@@ -390,6 +391,20 @@ fn print_pos(m: Move) !void {
     }
 }
 
+fn essai() !void {
+    const m: u64 = 0x942900102a42;
+    try print_pos(m);
+    var tb: Moves = undefined;
+    var nb: usize = undefined;
+    var tg: Moves = undefined;
+    var ng: usize = undefined;
+    var tv: Moves = undefined;
+    var nv: usize = undefined;
+    gen_moves(m, 0, &tb, &nb, &tg, &ng, &tv, &nv);
+    try stderr.print("nb={d} ng={d} nv={d}\n", .{ nb, ng, nv });
+    std.posix.exit(255);
+}
+
 pub fn main() !void {
     var args = std.process.args();
     _ = args.next();
@@ -398,6 +413,7 @@ pub fn main() !void {
     if ((turn != 1) and (turn != 2)) std.posix.exit(255);
 
     init_squares();
+    //    try essai();
 
     const RndGen = std.Random.DefaultPrng;
     hashes = try allocator.alloc(HashElem, HASH_SIZE);
