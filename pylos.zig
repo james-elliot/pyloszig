@@ -410,7 +410,21 @@ pub fn main() !void {
     _ = args.next();
     const sturn = args.next().?;
     var turn = std.fmt.parseInt(u8, sturn, 10) catch 0;
-    if ((turn != 1) and (turn != 2)) std.posix.exit(255);
+    if ((turn != 1) and (turn != 2)) {
+        std.posix.exit(255);
+    }
+
+    var vt: std.os.linux.itimerspec = undefined;
+    var vt2: std.os.linux.itimerspec = undefined;
+    vt.it_value.sec = 2;
+    vt.it_value.nsec = 0;
+    vt.it_interval.sec = 0;
+    vt.it_interval.nsec = 0;
+    const errc = std.os.linux.setitimer(@intFromEnum(std.os.linux.ITIMER.REAL), &vt, &vt2);
+    if (errc != 0) {
+        try stderr.print("Can't set timer\n", .{});
+        std.posix.exit(255);
+    }
 
     init_squares();
     //    try essai();
@@ -522,3 +536,4 @@ pub fn main() !void {
 
 //const Inner = struct { a: u32, b: bool };
 //var toto = [_][20]Inner{[_]Inner{.{ .a = 1, .b = true }} ** 20} ** 10;
+//std.os.linux.ITIMER.REAL;
