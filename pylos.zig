@@ -14,6 +14,7 @@ const o32: u32 = 1;
 
 const USE_HASH: bool = true;
 const USE_BMOVE: bool = false;
+const CHECK_BMOVE: bool = true;
 // 27 bits use 2GB
 const NB_BITS: u8 = 25;
 
@@ -143,12 +144,12 @@ fn updateab(color: Colors, depth: Depth, base: Depth, v: Vals, a: *Vals, b: *Val
     return (a.* >= b.*);
 }
 
-fn eval(m: Move, c: Colors) Vals {
+fn eval(m: Move) Vals {
     const mt = [2]u32{ @intCast(m & 0xffffffff), @intCast(m >> 32) };
     const v = @as(Vals, @popCount(mt[1])) - @as(Vals, @popCount(mt[0]));
-    if (@popCount(mt[c]) == MAX_PAWNS) {
-        if (c == WHITE) return v - Win / 3 else return v + Win / 3;
-    }
+    //    if (@popCount(mt[c]) == MAX_PAWNS) {
+    //        if (c == WHITE) return v - Win / 3 else return v + Win / 3;
+    //    }
     return v;
 }
 
@@ -242,7 +243,7 @@ fn gen_dbsquare(c: Colors, p: usize, m: Move, t: *Moves, n: *usize) void {
     }
     if ((n0 + n.*) >= t.len) {
         stderr.print("p={d} c={d}\n", .{ p, c }) catch unreachable;
-        std.posix.exit(255);
+        C.exit(255);
     }
     for (0..n0) |i| {
         t[n.*] = t0[i];
@@ -297,15 +298,17 @@ var hit: u64 = 0;
 var nodes: u64 = 0;
 fn ab(alp: Vals, bet: Vals, color: Colors, maxdepth: Depth, depth: Depth, base: Depth, m: Move) Vals {
     const oppcol = 1 - color;
-    if (depth == maxdepth) return eval(m, color);
+    if (depth == maxdepth) return eval(m);
     nodes += 1;
     var alpha = alp;
     var beta = bet;
     var bmove: Move = InvalidMove;
+    var cmove: Move = InvalidMove;
     const hv = compute_hash(m, color);
     var v_inf: Vals = undefined;
     var v_sup: Vals = undefined;
     if (USE_HASH and (retrieve(hv, &v_inf, &v_sup, &bmove, maxdepth - depth))) {
+        cmove = bmove;
         if (depth == base) best_move = bmove;
         if (v_inf == v_sup) return v_inf;
         if (v_inf >= beta) return v_inf;
@@ -334,6 +337,17 @@ fn ab(alp: Vals, bet: Vals, color: Colors, maxdepth: Depth, depth: Depth, base: 
         var tv: Moves = undefined;
         var nv: usize = undefined;
         gen_moves(m, color, &tb, &nb, &tg, &ng, &tv, &nv);
+        inner: {
+            if ((CHECK_BMOVE) and (cmove != InvalidMove)) {
+                for (0..nv) |i|
+                    if (cmove == tv[i]) break :inner;
+                for (0..ng) |i|
+                    if (tg[i] != bmove) break :inner;
+                for (0..nb) |i|
+                    if (tb[i] != bmove) break :inner;
+                stderr.print("Groumpf\n", .{}) catch unreachable;
+            }
+        }
         if ((nb + ng) == 0) {
             const mt = [2]u32{ @intCast(m & 0xffffffff), @intCast(m >> 32) };
             const v = @as(Vals, @popCount(mt[1])) - @as(Vals, @popCount(mt[0]));
@@ -410,12 +424,12 @@ fn essai() !void {
     var nv: usize = undefined;
     gen_moves(m, 0, &tb, &nb, &tg, &ng, &tv, &nv);
     try stderr.print("nb={d} ng={d} nv={d}\n", .{ nb, ng, nv });
-    std.posix.exit(255);
+    C.exit(255);
 }
 
 var get_out: bool = false;
 pub fn update_out(s: i32) callconv(.c) void {
-    if (s == std.posix.SIG.ALRM) get_out = true;
+    if (s == C.SIG.ALRM) get_out = true;
 }
 
 pub fn main() !void {
@@ -425,25 +439,25 @@ pub fn main() !void {
     var turn = std.fmt.parseInt(u8, sturn, 10) catch 0;
     if ((turn != 1) and (turn != 2)) {
         try stderr.print("turn is 1 or 2\n", .{});
-        std.posix.exit(255);
+        C.exit(255);
     }
     const stime = args.next().?;
     const time = std.fmt.parseInt(u32, stime, 10) catch 0;
     if (time == 0) {
         try stderr.print("time is >0\n", .{});
-        std.posix.exit(255);
+        C.exit(255);
     }
 
     const sigact = C.Sigaction{
         .handler = .{ .handler = update_out },
-        //        .handler = .{ .handler = std.posix.SIG.DFL },
+        //        .handler = .{ .handler = C.SIG.DFL },
         .mask = C.empty_sigset,
         .flags = 0,
     };
     const sres = C.sigaction(std.c.SIG.ALRM, &sigact, null);
     if (sres != 0) {
         try stderr.print("Can't install handler\n", .{});
-        std.posix.exit(255);
+        C.exit(255);
     }
 
     init_squares();
@@ -490,7 +504,7 @@ pub fn main() !void {
                 if (get_out) best_move = old_best else old_best = best_move;
                 if (best_move == InvalidMove) {
                     try stderr.print("Game Lost\n", .{});
-                    std.posix.exit(0);
+                    C.exit(0);
                 }
                 t = std.time.milliTimestamp() - t;
                 total_time += t;
@@ -517,7 +531,7 @@ pub fn main() !void {
         }
         if ((nb + ng) == 0) {
             try stderr.print("Game Won\n", .{});
-            std.posix.exit(0);
+            C.exit(0);
         }
         outer: while (true) {
             while (true) {
@@ -571,5 +585,5 @@ pub fn main() !void {
 //const errc = std.os.linux.setitimer(@intFromEnum(std.os.linux.ITIMER.REAL), &vt, &vt2);
 //if (errc != 0) {
 //    try stderr.print("Can't set timer\n", .{});
-//    std.posix.exit(255);
+//    C.exit(255);
 //}
