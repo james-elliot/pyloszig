@@ -20,6 +20,7 @@ const NB_BITS: u8 = 25;
 const Vals = i16;
 const Vals_min: Vals = std.math.minInt(Vals);
 const Vals_max: Vals = std.math.maxInt(Vals);
+const GET_OUT = Vals_min;
 const Depth = u8;
 const Colors = u1;
 const Sigs = u64;
@@ -70,7 +71,7 @@ const HashElem = packed struct {
 
 const ZHASH = HashElem{
     .sig = 0,
-    .v_inf = Vals_min,
+    .v_inf = -Vals_max,
     .v_sup = Vals_max,
     .base = 0,
     .dist = 0,
@@ -97,7 +98,7 @@ fn store(hv: Sigs, alpha: Vals, beta: Vals, g: Vals, dist: Depth, base: Depth, b
     if ((hashes[ind].base != base) or (hashes[ind].dist <= dist)) {
         if ((hashes[ind].sig != hv) or (hashes[ind].dist != dist)) {
             hashes[ind].dist = dist;
-            hashes[ind].v_inf = Vals_min;
+            hashes[ind].v_inf = -Vals_max;
             hashes[ind].v_sup = Vals_max;
             hashes[ind].sig = hv;
         }
@@ -115,7 +116,9 @@ fn store(hv: Sigs, alpha: Vals, beta: Vals, g: Vals, dist: Depth, base: Depth, b
 }
 
 fn compute_hash(m: Move, color: Colors) Sigs {
-    const p: *Move4 = @ptrCast(@constCast(&m));
+    //    const p: *Move4 = @ptrCast(@constCast(&m));
+    //    const p = @as(Move4, @bitCast(m));
+    const p: Move4 = @bitCast(m);
     const v = hash_init ^ hashesv[0][p[0]] ^ hashesv[1][p[1]] ^ hashesv[2][p[2]] ^ hashesv[3][p[3]];
     if (color == WHITE) return v else return v ^ hash_black;
 }
@@ -248,8 +251,9 @@ fn gen_dbsquare(c: Colors, p: usize, m: Move, t: *Moves, n: *usize) void {
 }
 
 fn gen_moves(m: Move, c: Colors, tb: *Moves, nb: *usize, tg: *Moves, ng: *usize, tv: *Moves, nv: *usize) void {
-    const mt = [2]u32{ @intCast(m & 0xffffffff), @intCast(m >> 32) };
+    //    const mt = [2]u32{ @intCast(m & 0xffffffff), @intCast(m >> 32) };
     //const mt: *Move3 = @ptrCast(@constCast(&m));
+    const mt: Move3 = @bitCast(m);
     const all = mt[0] | mt[1];
     var nall = ~all & 0x3fffffff;
     const have_marbles = @popCount(mt[c]) < MAX_PAWNS;
@@ -316,10 +320,11 @@ fn ab(alp: Vals, bet: Vals, color: Colors, maxdepth: Depth, depth: Depth, base: 
     var b = beta;
     var lmove: Move = InvalidMove;
 
-    var g: Vals = if (color == WHITE) Vals_min else Vals_max;
+    var g: Vals = if (color == WHITE) -Vals_max else Vals_max;
     outer: {
         if (bmove != InvalidMove) {
             const v = ab(a, b, oppcol, maxdepth, depth + 1, base, bmove);
+            if (get_out) return GET_OUT;
             if (updateab(color, depth, base, v, &a, &b, &g, bmove, &lmove)) break :outer;
         }
         var tb: Moves = undefined;
@@ -337,18 +342,21 @@ fn ab(alp: Vals, bet: Vals, color: Colors, maxdepth: Depth, depth: Depth, base: 
         for (0..nv) |i| {
             if (tv[i] != bmove) {
                 const v = ab(a, b, oppcol, maxdepth, depth + 1, base, tv[i]);
+                if (get_out) return GET_OUT;
                 if (updateab(color, depth, base, v, &a, &b, &g, tv[i], &lmove)) break :outer;
             }
         }
         for (0..ng) |i| {
             if (tg[i] != bmove) {
                 const v = ab(a, b, oppcol, maxdepth, depth + 1, base, tg[i]);
+                if (get_out) return GET_OUT;
                 if (updateab(color, depth, base, v, &a, &b, &g, tg[i], &lmove)) break :outer;
             }
         }
         for (0..nb) |i| {
             if (tb[i] != bmove) {
                 const v = ab(a, b, oppcol, maxdepth, depth + 1, base, tb[i]);
+                if (get_out) return GET_OUT;
                 if (updateab(color, depth, base, v, &a, &b, &g, tb[i], &lmove)) break :outer;
             }
         }
@@ -416,6 +424,13 @@ pub fn main() !void {
     const sturn = args.next().?;
     var turn = std.fmt.parseInt(u8, sturn, 10) catch 0;
     if ((turn != 1) and (turn != 2)) {
+        try stderr.print("turn is 1 or 2\n", .{});
+        std.posix.exit(255);
+    }
+    const stime = args.next().?;
+    const time = std.fmt.parseInt(u32, stime, 10) catch 0;
+    if (time == 0) {
+        try stderr.print("time is >0\n", .{});
         std.posix.exit(255);
     }
 
@@ -430,7 +445,6 @@ pub fn main() !void {
         try stderr.print("Can't install handler\n", .{});
         std.posix.exit(255);
     }
-    _ = C.alarm(1);
 
     init_squares();
     //    try essai();
@@ -462,13 +476,18 @@ pub fn main() !void {
             var total_time: i64 = 0;
             maxdepth = base + 1;
             ret = 0;
-            while ((total_time < 2000) and (@abs(ret) < Bwin)) {
+            _ = C.alarm(time);
+            get_out = false;
+            var old_best = InvalidMove;
+            while (!get_out and (@abs(ret) < Bwin)) {
+                //while ((total_time < 10000) and (@abs(ret) < Bwin)) {
                 //while ((maxdepth - base <= 1) and (@abs(ret) < Bwin)) {
                 best_move = InvalidMove;
                 t = std.time.milliTimestamp();
                 hit = 0;
                 nodes = 0;
-                ret = ab(Vals_min, Vals_max, color, maxdepth, base, base, m);
+                ret = ab(-Vals_max, Vals_max, color, maxdepth, base, base, m);
+                if (get_out) best_move = old_best else old_best = best_move;
                 if (best_move == InvalidMove) {
                     try stderr.print("Game Lost\n", .{});
                     std.posix.exit(0);
@@ -502,7 +521,6 @@ pub fn main() !void {
         }
         outer: while (true) {
             while (true) {
-                if (get_out) try stderr.print("get_out!!!!", .{});
                 try stderr.print("Your move:", .{});
                 if (try stdin.readUntilDelimiterOrEof(&buf, '\n')) |v| oppmove = std.fmt.parseInt(i64, v, 10) catch 64;
                 if (@abs(oppmove) < 31) break;
