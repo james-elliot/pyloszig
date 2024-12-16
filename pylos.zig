@@ -1,7 +1,7 @@
 const std = @import("std");
+const C = std.c;
 
 //const allocator = std.heap.page_allocator;
-
 var gpa = std.heap.GeneralPurposeAllocator(.{}){};
 const allocator = gpa.allocator();
 
@@ -405,6 +405,11 @@ fn essai() !void {
     std.posix.exit(255);
 }
 
+var get_out: bool = false;
+pub fn update_out(s: i32) callconv(.c) void {
+    if (s == std.posix.SIG.ALRM) get_out = true;
+}
+
 pub fn main() !void {
     var args = std.process.args();
     _ = args.next();
@@ -414,17 +419,18 @@ pub fn main() !void {
         std.posix.exit(255);
     }
 
-    var vt: std.os.linux.itimerspec = undefined;
-    var vt2: std.os.linux.itimerspec = undefined;
-    vt.it_value.sec = 2;
-    vt.it_value.nsec = 0;
-    vt.it_interval.sec = 0;
-    vt.it_interval.nsec = 0;
-    const errc = std.os.linux.setitimer(@intFromEnum(std.os.linux.ITIMER.REAL), &vt, &vt2);
-    if (errc != 0) {
-        try stderr.print("Can't set timer\n", .{});
+    const sigact = C.Sigaction{
+        .handler = .{ .handler = update_out },
+        //        .handler = .{ .handler = std.posix.SIG.DFL },
+        .mask = C.empty_sigset,
+        .flags = 0,
+    };
+    const sres = C.sigaction(std.c.SIG.ALRM, &sigact, null);
+    if (sres != 0) {
+        try stderr.print("Can't install handler\n", .{});
         std.posix.exit(255);
     }
+    _ = C.alarm(1);
 
     init_squares();
     //    try essai();
@@ -496,6 +502,7 @@ pub fn main() !void {
         }
         outer: while (true) {
             while (true) {
+                if (get_out) try stderr.print("get_out!!!!", .{});
                 try stderr.print("Your move:", .{});
                 if (try stdin.readUntilDelimiterOrEof(&buf, '\n')) |v| oppmove = std.fmt.parseInt(i64, v, 10) catch 64;
                 if (@abs(oppmove) < 31) break;
@@ -537,3 +544,14 @@ pub fn main() !void {
 //const Inner = struct { a: u32, b: bool };
 //var toto = [_][20]Inner{[_]Inner{.{ .a = 1, .b = true }} ** 20} ** 10;
 //std.os.linux.ITIMER.REAL;
+//    var vt: std.os.linux.itimerspec = undefined;
+//  var vt2: std.os.linux.itimerspec = undefined;
+//vt.it_value.sec = 2;
+//vt.it_value.nsec = 0;
+//vt.it_interval.sec = 0;
+//vt.it_interval.nsec = 0;
+//const errc = std.os.linux.setitimer(@intFromEnum(std.os.linux.ITIMER.REAL), &vt, &vt2);
+//if (errc != 0) {
+//    try stderr.print("Can't set timer\n", .{});
+//    std.posix.exit(255);
+//}
