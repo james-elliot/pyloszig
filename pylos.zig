@@ -11,10 +11,11 @@ const stderr = std.io.getStdErr().writer();
 
 const o64: u64 = 1;
 const o32: u32 = 1;
+const o16: u16 = 1;
 
 const USE_HASH: bool = true;
-const USE_BMOVE: bool = true;
-const CHECK_BMOVE: bool = false;
+const USE_BPOS: bool = true;
+const CHECK_BPOS: bool = false;
 // 27 bits use 2GB
 const NB_BITS: u8 = 26;
 
@@ -41,17 +42,17 @@ const Sigs = u64;
 // 29
 // bit  0:15 level 0 white, 16:24 level 1 white, 25:28 level 2 white, 29: level 3 white
 // bit 32:47 level 0 black, 48:56 level 1 black, 57:60 level 2 black, 61: level 3 black
-const Move = u64;
-const Move2 = [2]u32;
-const Move4 = [4]u16;
-const InvalidMove: Move = std.math.maxInt(Move);
+const Pos = u64;
+const Pos2 = [2]u32;
+const Pos4 = [4]u16;
+const InvalidPos: Pos = std.math.maxInt(Pos);
 const Win = 32700;
 const Bwin = 32600;
 const WHITE: Colors = 0;
 const BLACK: Colors = 1;
 const NB_COLS: usize = @as(usize, @intCast(BLACK)) + 1;
 const NB_LEVELS: usize = 4;
-const Moves = [256]Move;
+const Poss = [256]Pos;
 const MAX_PAWNS: u64 = 15;
 
 const HASH_SIZE: usize = 1 << NB_BITS;
@@ -66,7 +67,7 @@ const HashElem = packed struct {
     v_sup: Vals,
     base: Depth,
     dist: Depth,
-    bmove: Move,
+    bpos: Pos,
 };
 
 const ZHASH = HashElem{
@@ -75,15 +76,15 @@ const ZHASH = HashElem{
     .v_sup = Vals_max,
     .base = 0,
     .dist = 0,
-    .bmove = InvalidMove,
+    .bpos = InvalidPos,
 };
 
 var hashes: []HashElem = undefined;
 
-fn retrieve(hv: Sigs, v_inf: *Vals, v_sup: *Vals, bmove: *Move, dist: Depth) bool {
+fn retrieve(hv: Sigs, v_inf: *Vals, v_sup: *Vals, bpos: *Pos, dist: Depth) bool {
     const ind: usize = hv & HASH_MASK;
     if (hashes[ind].sig == hv) {
-        bmove.* = hashes[ind].bmove;
+        bpos.* = hashes[ind].bpos;
         if (hashes[ind].dist == dist) {
             v_inf.* = hashes[ind].v_inf;
             v_sup.* = hashes[ind].v_sup;
@@ -93,7 +94,7 @@ fn retrieve(hv: Sigs, v_inf: *Vals, v_sup: *Vals, bmove: *Move, dist: Depth) boo
     return false;
 }
 
-fn store(hv: Sigs, alpha: Vals, beta: Vals, g: Vals, dist: Depth, base: Depth, bmove: Move) void {
+fn store(hv: Sigs, alpha: Vals, beta: Vals, g: Vals, dist: Depth, base: Depth, bpos: Pos) void {
     const ind = hv & HASH_MASK;
     if ((hashes[ind].base != base) or (hashes[ind].dist <= dist)) {
         if ((hashes[ind].sig != hv) or (hashes[ind].dist != dist)) {
@@ -103,7 +104,7 @@ fn store(hv: Sigs, alpha: Vals, beta: Vals, g: Vals, dist: Depth, base: Depth, b
             hashes[ind].sig = hv;
         }
         hashes[ind].base = base;
-        hashes[ind].bmove = bmove;
+        hashes[ind].bpos = bpos;
         if ((g > alpha) and (g < beta)) {
             hashes[ind].v_inf = g;
             hashes[ind].v_sup = g;
@@ -115,34 +116,46 @@ fn store(hv: Sigs, alpha: Vals, beta: Vals, g: Vals, dist: Depth, base: Depth, b
     }
 }
 
-fn compute_hash(m: Move, color: Colors) Sigs {
-    const p: Move4 = @bitCast(m);
+fn compute_sym() void {
+    for (0..1 << 16) |n| {
+        const v = @as(u16, n);
+        var nv: u16 = 0;
+        while (v != 0) {
+            const i = @ctz(n);
+            v ^= (o16 << i);
+            nv |= (o16 << (16 - i));
+        }
+    }
+}
+
+fn compute_hash(m: Pos, color: Colors) Sigs {
+    const p: Pos4 = @bitCast(m);
     const v = hash_init ^ hashesv[0][p[0]] ^ hashesv[1][p[1]] ^ hashesv[2][p[2]] ^ hashesv[3][p[3]];
     if (color == WHITE) return v else return v ^ hash_black;
 }
 
-var best_move: Move = undefined;
-fn updateab(color: Colors, depth: Depth, base: Depth, v: Vals, a: *Vals, b: *Vals, g: *Vals, p: Move, lmove: *Move) bool {
+var best_pos: Pos = undefined;
+fn updateab(color: Colors, depth: Depth, base: Depth, v: Vals, a: *Vals, b: *Vals, g: *Vals, p: Pos, lpos: *Pos) bool {
     if (color == WHITE) {
         if (v > g.*) {
             g.* = v;
-            lmove.* = p;
-            if (depth == base) best_move = lmove.*;
+            lpos.* = p;
+            if (depth == base) best_pos = lpos.*;
         }
         a.* = @max(a.*, g.*);
     } else {
         if (v < g.*) {
             g.* = v;
-            lmove.* = p;
-            if (depth == base) best_move = lmove.*;
+            lpos.* = p;
+            if (depth == base) best_pos = lpos.*;
         }
         b.* = @min(b.*, g.*);
     }
     return (a.* >= b.*);
 }
 
-fn eval(m: Move) Vals {
-    const mt: Move2 = @bitCast(m);
+fn eval(m: Pos) Vals {
+    const mt: Pos2 = @bitCast(m);
     return @as(Vals, @popCount(mt[1])) - @as(Vals, @popCount(mt[0]));
 }
 
@@ -155,7 +168,7 @@ var mbs: MaskB = undefined;
 // useful to know if it is possible to play a marble on i (all positions below must be occupied)
 var mus: MaskU = [_]u32{0} ** 30;
 // mos[i] is a mask of all positions over pos i
-// useful to know if a marble in i can be moved elsewhere (all positions over must be unoccupied)
+// useful to know if a marble in i can be posd elsewhere (all positions over must be unoccupied)
 var mos: MaskO = [_]u32{0} ** 30;
 
 fn set_bits(n: u8, t: []u8) void {
@@ -206,11 +219,11 @@ fn free_pos(m: u32, all: u32) u32 {
 }
 
 //Check if marble of color c put at pos p which has generated position m makes one (or more) "same color" squares
-fn gen_dbsquare(c: Colors, p: usize, m: Move, t: *Moves, n: *usize) void {
-    const mt: Move2 = @bitCast(m);
+fn gen_dbsquare(c: Colors, p: usize, m: Pos, t: *Poss, n: *usize) void {
+    const mt: Pos2 = @bitCast(m);
     var free: ?u32 = null;
     var n0: usize = 0;
-    var t0: Moves = undefined;
+    var t0: Poss = undefined;
     for (mbs[p].items) |v| outer: {
         if (v & mt[c] == v) {
             if (free == null) free = free_pos(mt[c], mt[0] | mt[1]);
@@ -243,8 +256,8 @@ fn gen_dbsquare(c: Colors, p: usize, m: Move, t: *Moves, n: *usize) void {
     }
 }
 
-fn gen_moves(m: Move, c: Colors, tb: *Moves, nb: *usize, tg: *Moves, ng: *usize, tv: *Moves, nv: *usize) void {
-    const mt: Move2 = @bitCast(m);
+fn gen_poss(m: Pos, c: Colors, tb: *Poss, nb: *usize, tg: *Poss, ng: *usize, tv: *Poss, nv: *usize) void {
+    const mt: Pos2 = @bitCast(m);
     const all = mt[0] | mt[1];
     var nall = ~all & 0x3fffffff;
     const have_marbles = @popCount(mt[c]) < MAX_PAWNS;
@@ -286,91 +299,91 @@ fn gen_moves(m: Move, c: Colors, tb: *Moves, nb: *usize, tg: *Moves, ng: *usize,
 
 var hit: u64 = 0;
 var nodes: u64 = 0;
-fn ab(alp: Vals, bet: Vals, color: Colors, maxdepth: Depth, depth: Depth, base: Depth, m: Move) Vals {
+fn ab(alp: Vals, bet: Vals, color: Colors, maxdepth: Depth, depth: Depth, base: Depth, m: Pos) Vals {
     const oppcol = 1 - color;
     if (depth == maxdepth) return eval(m);
     nodes += 1;
     var alpha = alp;
     var beta = bet;
-    var bmove: Move = InvalidMove;
-    var cmove: Move = InvalidMove;
+    var bpos: Pos = InvalidPos;
+    var cpos: Pos = InvalidPos;
     const hv = compute_hash(m, color);
     var v_inf: Vals = undefined;
     var v_sup: Vals = undefined;
-    if (USE_HASH and (retrieve(hv, &v_inf, &v_sup, &bmove, maxdepth - depth))) {
-        cmove = bmove;
-        if (depth == base) best_move = bmove;
+    if (USE_HASH and (retrieve(hv, &v_inf, &v_sup, &bpos, maxdepth - depth))) {
+        cpos = bpos;
+        if (depth == base) best_pos = bpos;
         if (v_inf == v_sup) return v_inf;
         if (v_inf >= beta) return v_inf;
         if (v_sup <= alpha) return v_sup;
         alpha = @max(alpha, v_inf);
         beta = @min(beta, v_sup);
         hit += 1;
-        if (!USE_BMOVE) bmove = InvalidMove;
+        if (!USE_BPOS) bpos = InvalidPos;
     }
 
     var a = alpha;
     var b = beta;
-    var lmove: Move = InvalidMove;
+    var lpos: Pos = InvalidPos;
 
     var g: Vals = if (color == WHITE) -Vals_max else Vals_max;
     outer: {
-        if (bmove != InvalidMove) {
-            const v = ab(a, b, oppcol, maxdepth, depth + 1, base, bmove);
+        if (bpos != InvalidPos) {
+            const v = ab(a, b, oppcol, maxdepth, depth + 1, base, bpos);
             if (get_out) return GET_OUT;
-            if (updateab(color, depth, base, v, &a, &b, &g, bmove, &lmove)) break :outer;
+            if (updateab(color, depth, base, v, &a, &b, &g, bpos, &lpos)) break :outer;
         }
-        var tb: Moves = undefined;
+        var tb: Poss = undefined;
         var nb: usize = undefined;
-        var tg: Moves = undefined;
+        var tg: Poss = undefined;
         var ng: usize = undefined;
-        var tv: Moves = undefined;
+        var tv: Poss = undefined;
         var nv: usize = undefined;
-        gen_moves(m, color, &tb, &nb, &tg, &ng, &tv, &nv);
+        gen_poss(m, color, &tb, &nb, &tg, &ng, &tv, &nv);
         inner: {
-            if ((CHECK_BMOVE) and (cmove != InvalidMove)) {
+            if ((CHECK_BPOS) and (cpos != InvalidPos)) {
                 for (0..nv) |i|
-                    if (cmove == tv[i]) break :inner;
+                    if (cpos == tv[i]) break :inner;
                 for (0..ng) |i|
-                    if (tg[i] != bmove) break :inner;
+                    if (tg[i] != bpos) break :inner;
                 for (0..nb) |i|
-                    if (tb[i] != bmove) break :inner;
+                    if (tb[i] != bpos) break :inner;
                 stderr.print("Groumpf\n", .{}) catch unreachable;
             }
         }
         if ((nb + ng) == 0) {
-            const mt: Move2 = @bitCast(m);
+            const mt: Pos2 = @bitCast(m);
             const v = @as(Vals, @popCount(mt[1])) - @as(Vals, @popCount(mt[0]));
             if (color == WHITE) return -Win + v else return Win + v;
         }
         for (0..nv) |i| {
-            if (tv[i] != bmove) {
+            if (tv[i] != bpos) {
                 const v = ab(a, b, oppcol, maxdepth, depth + 1, base, tv[i]);
                 if (get_out) return GET_OUT;
-                if (updateab(color, depth, base, v, &a, &b, &g, tv[i], &lmove)) break :outer;
+                if (updateab(color, depth, base, v, &a, &b, &g, tv[i], &lpos)) break :outer;
             }
         }
         for (0..ng) |i| {
-            if (tg[i] != bmove) {
+            if (tg[i] != bpos) {
                 const v = ab(a, b, oppcol, maxdepth, depth + 1, base, tg[i]);
                 if (get_out) return GET_OUT;
-                if (updateab(color, depth, base, v, &a, &b, &g, tg[i], &lmove)) break :outer;
+                if (updateab(color, depth, base, v, &a, &b, &g, tg[i], &lpos)) break :outer;
             }
         }
         for (0..nb) |i| {
-            if (tb[i] != bmove) {
+            if (tb[i] != bpos) {
                 const v = ab(a, b, oppcol, maxdepth, depth + 1, base, tb[i]);
                 if (get_out) return GET_OUT;
-                if (updateab(color, depth, base, v, &a, &b, &g, tb[i], &lmove)) break :outer;
+                if (updateab(color, depth, base, v, &a, &b, &g, tb[i], &lpos)) break :outer;
             }
         }
     }
-    store(hv, alpha, beta, g, maxdepth - depth, base, lmove);
+    store(hv, alpha, beta, g, maxdepth - depth, base, lpos);
     return g;
 }
 
-fn print_level(m: Move, l: usize) !void {
-    const mt: Move2 = @bitCast(m);
+fn print_level(m: Pos, l: usize) !void {
+    const mt: Pos2 = @bitCast(m);
     const all = mt[0] | mt[1];
     const size: usize = (4 - l);
     var base: usize = 0;
@@ -394,7 +407,7 @@ fn print_level(m: Move, l: usize) !void {
     }
 }
 
-fn print_pos(m: Move) !void {
+fn print_pos(m: Pos) !void {
     try stderr.print("pos={x}\n", .{m});
     for (0..4) |i| {
         try print_level(m, i);
@@ -404,13 +417,13 @@ fn print_pos(m: Move) !void {
 fn essai() !void {
     const m: u64 = 0x942900102a42;
     try print_pos(m);
-    var tb: Moves = undefined;
+    var tb: Poss = undefined;
     var nb: usize = undefined;
-    var tg: Moves = undefined;
+    var tg: Poss = undefined;
     var ng: usize = undefined;
-    var tv: Moves = undefined;
+    var tv: Poss = undefined;
     var nv: usize = undefined;
-    gen_moves(m, 0, &tb, &nb, &tg, &ng, &tv, &nv);
+    gen_poss(m, 0, &tb, &nb, &tg, &ng, &tv, &nv);
     try stderr.print("nb={d} ng={d} nv={d}\n", .{ nb, ng, nv });
     C.exit(255);
 }
@@ -468,10 +481,10 @@ pub fn main() !void {
     var t: i64 = undefined;
     var ret: Vals = undefined;
     var buf: [1000]u8 = undefined;
-    var oppmove: i64 = undefined;
+    var opppos: i64 = undefined;
     var color: Colors = if (turn == 1) WHITE else BLACK;
     var maxdepth: Depth = undefined;
-    var m: Move = 0;
+    var m: Pos = 0;
     while (true) {
         if (turn == 1) {
             var total_time: i64 = 0;
@@ -479,42 +492,42 @@ pub fn main() !void {
             ret = 0;
             _ = C.alarm(time);
             get_out = false;
-            var old_best = InvalidMove;
+            var old_best = InvalidPos;
             while (!get_out and (@abs(ret) < Bwin)) {
                 //while ((total_time < 10000) and (@abs(ret) < Bwin)) {
                 //while ((maxdepth - base <= 1) and (@abs(ret) < Bwin)) {
-                best_move = InvalidMove;
+                best_pos = InvalidPos;
                 t = std.time.milliTimestamp();
                 hit = 0;
                 nodes = 0;
                 ret = ab(-Vals_max, Vals_max, color, maxdepth, base, base, m);
-                if (get_out) best_move = old_best else old_best = best_move;
-                if (best_move == InvalidMove) {
+                if (get_out) best_pos = old_best else old_best = best_pos;
+                if (best_pos == InvalidPos) {
                     try stderr.print("Game Lost\n", .{});
                     C.exit(0);
                 }
                 t = std.time.milliTimestamp() - t;
                 total_time += t;
-                try stderr.print("depth={d} t={d}ms ret={d} nodes={d} hit={d} best_move={x}\n", .{ maxdepth - base, t, ret, nodes, hit, best_move });
+                try stderr.print("depth={d} t={d}ms ret={d} nodes={d} hit={d} best_pos={x}\n", .{ maxdepth - base, t, ret, nodes, hit, best_pos });
                 maxdepth += 1;
             }
-            try print_pos(best_move);
-            m = best_move;
+            try print_pos(best_pos);
+            m = best_pos;
             base += 1;
             color = if (color == WHITE) BLACK else WHITE;
         }
         turn = 1;
-        var mt: Move2 = @bitCast(m);
+        var mt: Pos2 = @bitCast(m);
         var newpos = m;
-        var tb: Moves = undefined;
+        var tb: Poss = undefined;
         var nb: usize = undefined;
-        var tg: Moves = undefined;
+        var tg: Poss = undefined;
         var ng: usize = undefined;
-        var tv: Moves = undefined;
+        var tv: Poss = undefined;
         var nv: usize = undefined;
-        gen_moves(m, color, &tb, &nb, &tg, &ng, &tv, &nv);
+        gen_poss(m, color, &tb, &nb, &tg, &ng, &tv, &nv);
         if (ng != 0) {
-            try stderr.print("Good moves:{d}\n", .{ng});
+            try stderr.print("Good poss:{d}\n", .{ng});
         }
         if ((nb + ng) == 0) {
             try stderr.print("Game Won\n", .{});
@@ -522,33 +535,33 @@ pub fn main() !void {
         }
         outer: while (true) {
             while (true) {
-                try stderr.print("Your move:", .{});
-                if (try stdin.readUntilDelimiterOrEof(&buf, '\n')) |v| oppmove = std.fmt.parseInt(i64, v, 10) catch 64;
-                if (@abs(oppmove) < 31) break;
+                try stderr.print("Your pos:", .{});
+                if (try stdin.readUntilDelimiterOrEof(&buf, '\n')) |v| opppos = std.fmt.parseInt(i64, v, 10) catch 64;
+                if (@abs(opppos) < 31) break;
             }
-            if (oppmove == 0) {
+            if (opppos == 0) {
                 for (0..nb) |i| {
                     if (newpos == tb[i]) {
-                        try stderr.print("Valid move\n", .{});
+                        try stderr.print("Valid pos\n", .{});
                         break :outer;
                     }
                 }
                 for (0..ng) |i| {
                     if (newpos == tg[i]) {
-                        try stderr.print("Valid move\n", .{});
+                        try stderr.print("Valid pos\n", .{});
                         break :outer;
                     }
                 }
-                try stderr.print("Invalid move\n", .{});
+                try stderr.print("Invalid pos\n", .{});
                 mt = @bitCast(m);
-            } else if (oppmove < 0) {
-                oppmove += 1;
-                const move: u5 = @intCast(-oppmove);
-                if ((mt[color] & (o32 << move)) != 0) mt[color] ^= (o32 << move);
+            } else if (opppos < 0) {
+                opppos += 1;
+                const pos: u5 = @intCast(-opppos);
+                if ((mt[color] & (o32 << pos)) != 0) mt[color] ^= (o32 << pos);
             } else {
-                oppmove -= 1;
-                const move: u5 = @intCast(oppmove);
-                if (((mt[0] | mt[1]) & (o32 << move)) == 0) mt[color] ^= (o32 << move);
+                opppos -= 1;
+                const pos: u5 = @intCast(opppos);
+                if (((mt[0] | mt[1]) & (o32 << pos)) == 0) mt[color] ^= (o32 << pos);
             }
             newpos = @as(u64, @intCast(mt[0])) | (@as(u64, @intCast(mt[1])) << 32);
             try print_pos(newpos);
@@ -574,5 +587,5 @@ pub fn main() !void {
 //    try stderr.print("Can't set timer\n", .{});
 //    C.exit(255);
 //}
-//    const mt3: *Move2 = @ptrCast(@constCast(&m));
+//    const mt3: *Pos2 = @ptrCast(@constCast(&m));
 //    const mt2 = [2]u32{ @intCast(m & 0xffffffff), @intCast(m >> 32) };
