@@ -55,7 +55,7 @@ const BLACK: Colors = 1;
 const NB_COLS: usize = @as(usize, @intCast(BLACK)) + 1;
 const NB_LEVELS: usize = 4;
 const Poss = [256]Pos;
-const MAX_PAWNS: u64 = 15;
+const MAX_PAWNS: i16 = 15;
 
 const HASH_SIZE: usize = 1 << NB_BITS;
 const HASH_MASK: Sigs = HASH_SIZE - 1;
@@ -205,9 +205,15 @@ fn updateab(color: Colors, depth: Depth, base: Depth, v: Vals, a: *Vals, b: *Val
     return (a.* >= b.*);
 }
 
-fn eval(m: Pos) Vals {
+fn eval(m: Pos, c: Colors) Vals {
     const mt: Pos2 = @bitCast(m);
-    return @as(Vals, @popCount(mt[1])) - @as(Vals, @popCount(mt[0]));
+    const vw = @as(Vals, @popCount(mt[0]));
+    const vb = @as(Vals, @popCount(mt[1]));
+    const used = vw + vb;
+    var v = 1000 * (vb - vw);
+    if (c == WHITE) v -= 500 else v += 500;
+    if (v > 0) v += 2 * used else v -= 2 * used;
+    return v;
 }
 
 const MaskB = [30]std.ArrayList(u32);
@@ -352,7 +358,7 @@ var hit: u64 = 0;
 var nodes: u64 = 0;
 fn ab(alp: Vals, bet: Vals, color: Colors, maxdepth: Depth, depth: Depth, base: Depth, m: Pos) Vals {
     const oppcol = 1 - color;
-    if (depth == maxdepth) return eval(m);
+    if (depth == maxdepth) return eval(m, color);
     nodes += 1;
     var alpha = alp;
     var beta = bet;
@@ -364,7 +370,8 @@ fn ab(alp: Vals, bet: Vals, color: Colors, maxdepth: Depth, depth: Depth, base: 
     if (USE_HASH and (retrieve(hv, &v_inf, &v_sup, &bpos, maxdepth - depth))) {
         cpos = bpos;
         loop: {
-            if (depth == base) {
+            //Code compliqué à cause des symétries. Inutile si pas de symétrie.
+            if ((depth == base) and (bpos != InvalidPos)) {
                 var tb: Poss = undefined;
                 var nb: usize = undefined;
                 var tg: Poss = undefined;
@@ -391,9 +398,15 @@ fn ab(alp: Vals, bet: Vals, color: Colors, maxdepth: Depth, depth: Depth, base: 
                         break :loop;
                     }
                 }
+                stderr.print("m={x}\n", .{m}) catch unreachable;
+                print_pos(m) catch unreachable;
+                stderr.print("bpos={x}\n", .{bpos}) catch unreachable;
+                print_pos(bpos) catch unreachable;
+                for (0..nv) |i| print_pos(tv[i]) catch unreachable;
+                for (0..ng) |i| print_pos(tg[i]) catch unreachable;
+                for (0..nb) |i| print_pos(tb[i]) catch unreachable;
+                C.exit(255);
             }
-            stderr.print("Slurbp\n", .{}) catch unreachable;
-            C.exit(255);
         }
         if (v_inf == v_sup) return v_inf;
         if (v_inf >= beta) return v_inf;
@@ -566,7 +579,6 @@ pub fn main() !void {
 
     var base: Depth = 0;
     var t: i64 = undefined;
-    var ret: Vals = undefined;
     var buf: [1000]u8 = undefined;
     var opppos: i64 = undefined;
     var color: Colors = if (turn == 1) WHITE else BLACK;
@@ -576,7 +588,9 @@ pub fn main() !void {
         if (turn == 1) {
             var total_time: i64 = 0;
             maxdepth = base + 1;
-            ret = 0;
+            var ret: Vals = undefined;
+            var minv: Vals = -Vals_max;
+            var maxv: Vals = Vals_max;
             _ = C.alarm(time);
             get_out = false;
             var old_best = InvalidPos;
@@ -587,16 +601,32 @@ pub fn main() !void {
                 t = std.time.milliTimestamp();
                 hit = 0;
                 nodes = 0;
-                ret = ab(-Vals_max, Vals_max, color, maxdepth, base, base, m);
-                if (get_out) best_pos = old_best else old_best = best_pos;
+                ret = ab(minv, maxv, color, maxdepth, base, base, m);
+                t = std.time.milliTimestamp() - t;
+                total_time += t;
+                if (get_out) best_pos = old_best;
+                try stderr.print("depth={d:3} t={d:7}ms tt={d:7}ms minv={d:7} maxv={d:7} ret={d:7} nodes={d:10} hit={d:8} best_pos={x:0>16}\n", .{ maxdepth - base, t, total_time, minv, maxv, ret, nodes, hit, best_pos });
                 if (best_pos == InvalidPos) {
                     try stderr.print("Game Lost\n", .{});
                     C.exit(0);
                 }
-                t = std.time.milliTimestamp() - t;
-                total_time += t;
-                try stderr.print("depth={d} t={d}ms ret={d} nodes={d} hit={d} best_pos={x}\n", .{ maxdepth - base, t, ret, nodes, hit, best_pos });
-                maxdepth += 1;
+                if ((ret > minv) and (ret < maxv)) {
+                    maxdepth += 1;
+                    old_best = best_pos;
+                    if (ret < 0) {
+                        minv = ret - 3;
+                        maxv = ret - 1;
+                    } else {
+                        minv = ret + 1;
+                        maxv = ret + 3;
+                    }
+                } else if (ret >= maxv) {
+                    minv = ret - 1;
+                    maxv = Vals_max;
+                } else {
+                    maxv = ret + 1;
+                    minv = Vals_min;
+                }
             }
             try print_pos(best_pos);
             m = best_pos;
