@@ -15,11 +15,11 @@ const o16: u16 = 1;
 
 const USE_HASH: bool = true;
 const USE_SYM = true;
-//Never use BPOS when symmetries are used!!!!
-const USE_BPOS: bool = false and (!USE_SYM);
+//Dangerous to use BPOS when symmetries are used!!!!
+const USE_BPOS: bool = true;
 const CHECK_BPOS: bool = false;
 // 27 bits use 2GB
-const NB_BITS: u8 = 26;
+const NB_BITS: u8 = 27;
 
 const Vals = i16;
 const Vals_min: Vals = std.math.minInt(Vals);
@@ -47,6 +47,19 @@ const Sigs = u64;
 const Pos = u64;
 const Pos2 = [2]u32;
 const Pos4 = [4]u16;
+const Pos8 = [8]u8;
+const Posa = packed struct {
+    l0w: u16, //Level 0 white 4x4
+    l1w: u9, //Level 1 white 3x3
+    l2w: u4, //Level 2 white 2x2
+    l3w: u1, //Level 3 white 1
+    pw: u2, // Padding
+    l0b: u16, //Level 0 white 4x4
+    l1b: u9, //Level 1 white 3x3
+    l2b: u4, //Level 2 white 2x2
+    l3b: u1, //Level 3 white 1
+    pb: u2,
+};
 const InvalidPos: Pos = std.math.maxInt(Pos);
 const Win = 32700;
 const Bwin = 32600;
@@ -59,34 +72,32 @@ const MAX_PAWNS: i16 = 15;
 
 const HASH_SIZE: usize = 1 << NB_BITS;
 const HASH_MASK: Sigs = HASH_SIZE - 1;
-var hashesv: [5][4][1 << 16]Sigs = undefined;
+const NB_SYMS: usize = 8;
+var hashesv: [NB_SYMS][4][1 << 16]Sigs = undefined;
 var hash_black: Sigs = undefined;
 var hash_init: Sigs = undefined;
 
 const HashElem = packed struct {
-    sig: Sigs,
-    v_inf: Vals,
-    v_sup: Vals,
-    base: Depth,
-    dist: Depth,
-    bpos: Pos,
+    sig: Sigs, // Hash value; when using symetries, it is the max of all possible syms
+    v_inf: Vals, // Inf
+    v_sup: Vals, // Sup
+    base: Depth, // Base
+    dist: Depth, // Distance to leaf
+    bpos: Pos, // Best position from this position
+    sym: u8, // arg max of the symetry signature
+    m: Pos, // Current position
 };
 
-const ZHASH = HashElem{
-    .sig = 0,
-    .v_inf = -Vals_max,
-    .v_sup = Vals_max,
-    .base = 0,
-    .dist = 0,
-    .bpos = InvalidPos,
-};
+const ZHASH = HashElem{ .sig = 0, .v_inf = -Vals_max, .v_sup = Vals_max, .base = 0, .dist = 0, .bpos = InvalidPos, .sym = 0, .m = 0 };
 
 var hashes: []HashElem = undefined;
 
-fn retrieve(hv: Sigs, v_inf: *Vals, v_sup: *Vals, bpos: *Pos, dist: Depth) bool {
+fn retrieve(hv: Sigs, sym: *u8, m: *Pos, v_inf: *Vals, v_sup: *Vals, bpos: *Pos, dist: Depth) bool {
     const ind: usize = hv & HASH_MASK;
     if (hashes[ind].sig == hv) {
         bpos.* = hashes[ind].bpos;
+        sym.* = hashes[ind].sym;
+        m.* = hashes[ind].m;
         if (hashes[ind].dist == dist) {
             v_inf.* = hashes[ind].v_inf;
             v_sup.* = hashes[ind].v_sup;
@@ -96,7 +107,7 @@ fn retrieve(hv: Sigs, v_inf: *Vals, v_sup: *Vals, bpos: *Pos, dist: Depth) bool 
     return false;
 }
 
-fn store(hv: Sigs, alpha: Vals, beta: Vals, g: Vals, dist: Depth, base: Depth, bpos: Pos) void {
+fn store(hv: Sigs, sym: u8, m: Pos, alpha: Vals, beta: Vals, g: Vals, dist: Depth, base: Depth, bpos: Pos) void {
     const ind = hv & HASH_MASK;
     if ((hashes[ind].base != base) or (hashes[ind].dist <= dist)) {
         if ((hashes[ind].sig != hv) or (hashes[ind].dist != dist)) {
@@ -104,16 +115,111 @@ fn store(hv: Sigs, alpha: Vals, beta: Vals, g: Vals, dist: Depth, base: Depth, b
             hashes[ind].v_inf = -Vals_max;
             hashes[ind].v_sup = Vals_max;
             hashes[ind].sig = hv;
+            hashes[ind].sym = sym;
+            hashes[ind].m = m;
         }
         hashes[ind].base = base;
         hashes[ind].bpos = bpos;
-        if ((g > alpha) and (g < beta)) {
+        if ((g >= alpha) and (g <= beta)) {
             hashes[ind].v_inf = g;
             hashes[ind].v_sup = g;
-        } else if (g <= alpha) {
+        } else if (g < alpha) {
             hashes[ind].v_sup = @min(g, hashes[ind].v_sup);
-        } else if (g >= beta) {
+        } else if (g > beta) {
             hashes[ind].v_inf = @max(g, hashes[ind].v_inf);
+        }
+    }
+}
+
+fn f1(i: u4, j: u4, n: u4) u4 {
+    return n * i + j;
+}
+fn f2(i: u4, j: u4, n: u4) u4 {
+    return n * (n - 1 - j) + i;
+}
+fn f3(i: u4, j: u4, n: u4) u4 {
+    return n * j + (n - 1 - i);
+}
+fn f4(i: u4, j: u4, n: u4) u4 {
+    return n * (n - 1 - j) + (n - 1 - i);
+}
+fn f5(i: u4, j: u4, n: u4) u4 {
+    return n * i + (n - 1 - j);
+}
+fn f6(i: u4, j: u4, n: u4) u4 {
+    return n * (n - 1 - i) + j;
+}
+fn f7(i: u4, j: u4, n: u4) u4 {
+    return n * (n - 1 - i) + (n - 1 - j);
+}
+const sf = *const fn (i: u4, j: u4, n: u4) u4;
+const ft = [7]sf{ f1, f2, f3, f4, f5, f6, f7 };
+
+fn compute_sym0(n: usize, k: usize) u16 {
+    var v = @as(u16, @intCast(n));
+    var nv: u16 = 0;
+    while (v != 0) {
+        const p: u4 = @intCast(@ctz(v));
+        v ^= (o16 << p);
+        const i = p % 4;
+        const j = p / 4;
+        nv |= o16 << ft[k](i, j, 4);
+    }
+    return nv;
+}
+
+fn compute_sym1(n: usize, k: usize) u16 {
+    var v = @as(u16, @intCast(n));
+    var nv: u16 = 0;
+    while (v != 0) {
+        const p: u4 = @intCast(@ctz(v));
+        v ^= (o16 << p);
+        if (p < 9) {
+            const i = p % 3;
+            const j = p / 3;
+            nv |= o16 << ft[k](i, j, 3);
+        } else if (p < 13) {
+            const i = (p - 9) % 2;
+            const j = (p - 9) / 2;
+            nv |= o16 << (9 + ft[k](i, j, 2));
+        } else {
+            nv = o16 << p;
+        }
+    }
+    return nv;
+}
+
+fn compute_sym_all(p: Pos, k: usize) Pos {
+    const p4: Pos4 = @bitCast(p);
+    var np4: Pos4 = undefined;
+    np4[0] = compute_sym0(p4[0], k);
+    np4[1] = compute_sym1(p4[1], k);
+    np4[2] = compute_sym0(p4[2], k);
+    np4[3] = compute_sym1(p4[3], k);
+    const res: Pos = @bitCast(np4);
+    return res;
+}
+
+fn find_sym(m2: Pos, m: Pos) usize {
+    for (1..NB_SYMS) |k| {
+        if (compute_sym_all(m2, k - 1) == m) return k;
+    }
+    return 0;
+}
+fn compute_sym_alt() void {
+    for (0..1 << 16) |n| {
+        for (1..NB_SYMS) |k| {
+            //            stderr.print("{x} {d}\n", .{ n, k - 1 }) catch unreachable;
+            const l = compute_sym0(n, k - 1);
+            hashesv[k][0][l] = hashesv[0][0][n];
+            hashesv[k][2][l] = hashesv[0][2][n];
+        }
+    }
+    for (0..1 << 14) |n| {
+        for (1..NB_SYMS) |k| {
+            const l = compute_sym1(n, k - 1);
+            hashesv[k][1][l] = hashesv[0][1][n];
+            hashesv[k][3][l] = hashesv[0][3][n];
         }
     }
 }
@@ -121,67 +227,69 @@ fn store(hv: Sigs, alpha: Vals, beta: Vals, g: Vals, dist: Depth, base: Depth, b
 fn compute_sym() void {
     for (0..1 << 16) |n| {
         var v = @as(u16, @intCast(n));
-        var nv = [4]u16{ 0, 0, 0, 0 };
+        var nv = [7]u16{ 0, 0, 0, 0, 0, 0, 0 };
         while (v != 0) {
             const p: u4 = @intCast(@ctz(v));
             v ^= (o16 << p);
             const i = p % 4;
             const j = p / 4;
-            nv[0] |= o16 << (4 * i + j);
-            nv[1] |= o16 << (4 * (3 - j) + i);
-            nv[2] |= o16 << (4 * j + (3 - i));
-            nv[3] |= o16 << (4 * (3 - j) + (3 - i));
+            for (ft, 0..) |f, k| {
+                nv[k] |= o16 << f(i, j, 4);
+            }
         }
         //        stderr.print("{b} {b} {b} {b} {b}\n", .{ n, nv[0], nv[1], nv[2], nv[3] }) catch unreachable;
-        for (1..5) |k| {
+        for (1..NB_SYMS) |k| {
             hashesv[k][0][nv[k - 1]] = hashesv[0][0][n];
             hashesv[k][2][nv[k - 1]] = hashesv[0][2][n];
         }
     }
     for (0..1 << 14) |n| {
         var v = @as(u16, @intCast(n));
-        var nv = [4]u16{ 0, 0, 0, 0 };
+        var nv = [7]u16{ 0, 0, 0, 0, 0, 0, 0 };
         while (v != 0) {
             const p: u4 = @intCast(@ctz(v));
             v ^= (o16 << p);
             if (p < 9) {
                 const i = p % 3;
                 const j = p / 3;
-                nv[0] |= o16 << (3 * i + j);
-                nv[1] |= o16 << (3 * (2 - j) + i);
-                nv[2] |= o16 << (3 * j + (2 - i));
-                nv[3] |= o16 << (3 * (2 - j) + (2 - i));
+                for (ft, 0..) |f, k| {
+                    nv[k] |= o16 << f(i, j, 3);
+                }
             } else if (p < 13) {
                 const i = (p - 9) % 2;
                 const j = (p - 9) / 2;
-                nv[0] |= o16 << (9 + 2 * i + j);
-                nv[1] |= o16 << (9 + 2 * (1 - j) + i);
-                nv[2] |= o16 << (9 + 2 * j + (1 - i));
-                nv[3] |= o16 << (9 + 2 * (1 - j) + (1 - i));
+                for (ft, 0..) |f, k| {
+                    nv[k] |= o16 << (9 + f(i, j, 2));
+                }
             } else {
-                nv[0] |= o16 << p;
-                nv[1] |= o16 << p;
-                nv[2] |= o16 << p;
-                nv[3] |= o16 << p;
+                for (0..7) |k| {
+                    nv[k] = o16 << p;
+                }
             }
         }
         //        stderr.print("{b:0>14} {b:0>14} {b:0>14} {b:0>14} {b:0>14}\n", .{ n, nv[0], nv[1], nv[2], nv[3] }) catch unreachable;
-        for (1..5) |k| {
+        for (1..NB_SYMS) |k| {
             hashesv[k][1][nv[k - 1]] = hashesv[0][1][n];
             hashesv[k][3][nv[k - 1]] = hashesv[0][3][n];
         }
     }
 }
 
-fn compute_hash(m: Pos, color: Colors) Sigs {
+fn compute_hash(m: Pos, color: Colors, sym: *u8) Sigs {
     const p: Pos4 = @bitCast(m);
-    var vt = [5]Sigs{ hash_init, hash_init, hash_init, hash_init, hash_init };
-    for (0..5) |i| {
+    var vt = [NB_SYMS]Sigs{ hash_init, hash_init, hash_init, hash_init, hash_init, hash_init, hash_init, hash_init };
+    var v: Sigs = 0;
+    var nb: usize = 1;
+    if (USE_SYM) nb = NB_SYMS;
+    for (0..nb) |i| {
         for (0..4) |j| {
             vt[i] ^= hashesv[i][j][p[j]];
         }
+        if (vt[i] >= v) {
+            v = vt[i];
+            sym.* = @intCast(i);
+        }
     }
-    const v = if (USE_SYM) @min(vt[0], @min(vt[1], @min(vt[2], @min(vt[3], vt[4])))) else vt[0];
     if (color == WHITE) return v else return v ^ hash_black;
 }
 
@@ -202,7 +310,7 @@ fn updateab(color: Colors, depth: Depth, base: Depth, v: Vals, a: *Vals, b: *Val
         }
         b.* = @min(b.*, g.*);
     }
-    return (a.* >= b.*);
+    return (a.* > b.*);
 }
 
 fn eval(m: Pos, c: Colors) Vals {
@@ -355,6 +463,9 @@ fn gen_poss(m: Pos, c: Colors, tb: *Poss, nb: *usize, tg: *Poss, ng: *usize, tv:
 }
 
 var hit: u64 = 0;
+var hit2: u64 = 0;
+var errh: u64 = 0;
+var errh2: u64 = 0;
 var nodes: u64 = 0;
 fn ab(alp: Vals, bet: Vals, color: Colors, maxdepth: Depth, depth: Depth, base: Depth, m: Pos) Vals {
     const oppcol = 1 - color;
@@ -364,57 +475,35 @@ fn ab(alp: Vals, bet: Vals, color: Colors, maxdepth: Depth, depth: Depth, base: 
     var beta = bet;
     var bpos: Pos = InvalidPos;
     var cpos: Pos = InvalidPos;
-    const hv = compute_hash(m, color);
+    var sym: u8 = 0;
+    var hv: Sigs = 0;
     var v_inf: Vals = undefined;
     var v_sup: Vals = undefined;
-    if (USE_HASH and (retrieve(hv, &v_inf, &v_sup, &bpos, maxdepth - depth))) {
-        cpos = bpos;
-        loop: {
-            //Code compliqué à cause des symétries. Inutile si pas de symétrie.
-            if ((depth == base) and (bpos != InvalidPos)) {
-                var tb: Poss = undefined;
-                var nb: usize = undefined;
-                var tg: Poss = undefined;
-                var ng: usize = undefined;
-                var tv: Poss = undefined;
-                var nv: usize = undefined;
-                gen_poss(m, color, &tb, &nb, &tg, &ng, &tv, &nv);
-                const hv2 = compute_hash(bpos, color);
-                for (0..nv) |i| {
-                    if (compute_hash(tv[i], color) == hv2) {
-                        best_pos = tv[i];
-                        break :loop;
-                    }
-                }
-                for (0..ng) |i| {
-                    if (compute_hash(tg[i], color) == hv2) {
-                        best_pos = tg[i];
-                        break :loop;
-                    }
-                }
-                for (0..nb) |i| {
-                    if (compute_hash(tb[i], color) == hv2) {
-                        best_pos = tb[i];
-                        break :loop;
-                    }
-                }
-                stderr.print("m={x}\n", .{m}) catch unreachable;
-                print_pos(m) catch unreachable;
-                stderr.print("bpos={x}\n", .{bpos}) catch unreachable;
-                print_pos(bpos) catch unreachable;
-                for (0..nv) |i| print_pos(tv[i]) catch unreachable;
-                for (0..ng) |i| print_pos(tg[i]) catch unreachable;
-                for (0..nb) |i| print_pos(tb[i]) catch unreachable;
-                C.exit(255);
+
+    if (USE_HASH) {
+        hv = compute_hash(m, color, &sym);
+        var sym2: u8 = 0;
+        var m2: Pos = undefined;
+        if (retrieve(hv, &sym2, &m2, &v_inf, &v_sup, &cpos, maxdepth - depth)) {
+            //Attention risque de bug si symétries
+            if (depth == base) best_pos = cpos;
+            if (v_inf == v_sup) return v_inf;
+            if (v_inf > beta) return v_inf;
+            if (v_sup < alpha) return v_sup;
+            alpha = @max(alpha, v_inf);
+            beta = @min(beta, v_sup);
+            hit += 1;
+        }
+        if (cpos != InvalidPos) {
+            hit2 += 1;
+            if (((m2 == m) and (sym2 != sym)) or ((m2 != m) and (sym2 == sym))) errh2 += 1;
+            if (m2 != m) {
+                errh += 1;
+                const n = find_sym(m2, m);
+                if (n == 0) stderr.print("Zorglub\n", .{}) catch unreachable;
             }
         }
-        if (v_inf == v_sup) return v_inf;
-        if (v_inf >= beta) return v_inf;
-        if (v_sup <= alpha) return v_sup;
-        alpha = @max(alpha, v_inf);
-        beta = @min(beta, v_sup);
-        hit += 1;
-        if (!USE_BPOS) bpos = InvalidPos;
+        if ((USE_BPOS) and (m2 == m)) bpos = cpos;
     }
 
     var a = alpha;
@@ -473,7 +562,7 @@ fn ab(alp: Vals, bet: Vals, color: Colors, maxdepth: Depth, depth: Depth, base: 
             }
         }
     }
-    store(hv, alpha, beta, g, maxdepth - depth, base, lpos);
+    if (USE_HASH) store(hv, sym, m, alpha, beta, g, maxdepth - depth, base, lpos);
     return g;
 }
 
@@ -503,14 +592,18 @@ fn print_level(m: Pos, l: usize) !void {
 }
 
 fn print_pos(m: Pos) !void {
-    try stderr.print("pos={x}\n", .{m});
+    const mt: Posa = @bitCast(m);
+    const mt2: Pos2 = @bitCast(m);
+    try stderr.print("pos={x:0>16}\n", .{m});
+    try stderr.print("pos={b:0>64}\n", .{m});
+    try stderr.print("pos={b:0>1} {b:0>4} {b:0>9} {b:0>16} : {b:0>1} {b:0>4} {b:0>9} {b:0>16}\n", .{ mt.l3b, mt.l2b, mt.l1b, mt.l0b, mt.l3w, mt.l2w, mt.l1w, mt.l0w });
     for (0..4) |i| {
         try print_level(m, i);
     }
+    try stderr.print("X:{d} O:{d}\n", .{ MAX_PAWNS - @popCount(mt2[0]), MAX_PAWNS - @popCount(mt2[1]) });
 }
 
-fn essai() !void {
-    const m: u64 = 0x3080a000004e41;
+fn essai(m: u64, c: Colors) !void {
     try print_pos(m);
     var tb: Poss = undefined;
     var nb: usize = undefined;
@@ -518,7 +611,7 @@ fn essai() !void {
     var ng: usize = undefined;
     var tv: Poss = undefined;
     var nv: usize = undefined;
-    gen_poss(m, 0, &tb, &nb, &tg, &ng, &tv, &nv);
+    gen_poss(m, c, &tb, &nb, &tg, &ng, &tv, &nv);
     try stderr.print("nb={d} ng={d} nv={d}\n", .{ nb, ng, nv });
     for (0..nb) |i| try print_pos(tb[i]);
     for (0..ng) |i| try print_pos(tg[i]);
@@ -560,7 +653,7 @@ pub fn main() !void {
     }
 
     init_squares();
-    //    try essai();
+    //    try essai(0x0018294d02030632, BLACK);
 
     const RndGen = std.Random.DefaultPrng;
     hashes = try allocator.alloc(HashElem, HASH_SIZE);
@@ -575,7 +668,11 @@ pub fn main() !void {
     hash_black = rnd.random().int(Sigs);
     hash_init = rnd.random().int(Sigs);
 
-    compute_sym();
+    compute_sym_alt();
+    //    const h1 = compute_hash(0b00010000000010000000000000001, WHITE);
+    //  const h2 = compute_hash(0b10001000000001000000000000000, WHITE);
+    //try stderr.print("{x}\n{x}\n", .{ h1, h2 });
+    //C.exit(255);
 
     var base: Depth = 0;
     var t: i64 = undefined;
@@ -584,6 +681,7 @@ pub fn main() !void {
     var color: Colors = if (turn == 1) WHITE else BLACK;
     var maxdepth: Depth = undefined;
     var m: Pos = 0;
+    //    var m: Pos = 0x0011029200004569;
     while (true) {
         if (turn == 1) {
             var total_time: i64 = 0;
@@ -596,21 +694,24 @@ pub fn main() !void {
             var old_best = InvalidPos;
             while (!get_out and (@abs(ret) < Bwin)) {
                 //while ((total_time < 10000) and (@abs(ret) < Bwin)) {
-                //while ((maxdepth - base <= 1) and (@abs(ret) < Bwin)) {
+                //while ((maxdepth - base <= 15) and (@abs(ret) < Bwin)) {
                 best_pos = InvalidPos;
                 t = std.time.milliTimestamp();
                 hit = 0;
+                hit2 = 0;
+                errh = 0;
+                errh2 = 0;
                 nodes = 0;
                 ret = ab(minv, maxv, color, maxdepth, base, base, m);
                 t = std.time.milliTimestamp() - t;
                 total_time += t;
                 if (get_out) best_pos = old_best;
-                try stderr.print("depth={d:3} t={d:7}ms tt={d:7}ms minv={d:7} maxv={d:7} ret={d:7} nodes={d:10} hit={d:8} best_pos={x:0>16}\n", .{ maxdepth - base, t, total_time, minv, maxv, ret, nodes, hit, best_pos });
+                try stderr.print("depth={d:3} t={d:7}ms tt={d:7}ms minv={d:7} maxv={d:7} ret={d:7} nodes={d:10} hit={d:8} hit2={d:8} errh={d:8} errh2={d:8} best_pos={x:0>16}\n", .{ maxdepth - base, t, total_time, minv, maxv, ret, nodes, hit, hit2, errh, errh2, best_pos });
                 if (best_pos == InvalidPos) {
                     try stderr.print("Game Lost\n", .{});
                     C.exit(0);
                 }
-                if ((ret > minv) and (ret < maxv)) {
+                if ((ret >= minv) and (ret <= maxv)) {
                     maxdepth += 1;
                     old_best = best_pos;
                     if (ret < 0) {
@@ -627,6 +728,8 @@ pub fn main() !void {
                     maxv = ret + 1;
                     minv = Vals_min;
                 }
+                minv = -Vals_max;
+                maxv = Vals_max;
             }
             try print_pos(best_pos);
             m = best_pos;
@@ -643,9 +746,7 @@ pub fn main() !void {
         var tv: Poss = undefined;
         var nv: usize = undefined;
         gen_poss(m, color, &tb, &nb, &tg, &ng, &tv, &nv);
-        if (ng != 0) {
-            try stderr.print("Good poss:{d}\n", .{ng});
-        }
+        try stderr.print("nb:{d} ng:{d} nv:{d} \n", .{ nb, ng, nv });
         if ((nb + ng) == 0) {
             try stderr.print("Game Won\n", .{});
             C.exit(0);
@@ -665,6 +766,12 @@ pub fn main() !void {
                 }
                 for (0..ng) |i| {
                     if (newpos == tg[i]) {
+                        try stderr.print("Valid pos\n", .{});
+                        break :outer;
+                    }
+                }
+                for (0..nv) |i| {
+                    if (newpos == tv[i]) {
                         try stderr.print("Valid pos\n", .{});
                         break :outer;
                     }
@@ -706,3 +813,26 @@ pub fn main() !void {
 //}
 //    const mt3: *Pos2 = @ptrCast(@constCast(&m));
 //    const mt2 = [2]u32{ @intCast(m & 0xffffffff), @intCast(m >> 32) };
+//
+//
+//pos=0011029200004569
+//
+//pos=0011029200080569
+//pos=0000000000010001000000101001001000000000000010000000010101101001
+//pos=0 0000 000010001 0000001010010010 : 0 0000 000001000 0000010101101001
+//Level=0
+// 1: x o . X
+// 5: o x x O
+// 9: x o x .
+//13: . . . .
+//Level=1
+//17: O . .
+//20: X O .
+//23: . . .
+//Level=2
+//26: . .
+//28: . .
+//Level=3
+//30: .
+//X:8 O:9
+//Your pos:16
