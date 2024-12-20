@@ -499,11 +499,13 @@ fn ab(alp: Vals, bet: Vals, color: Colors, maxdepth: Depth, depth: Depth, base: 
             if (((m2 == m) and (sym2 != sym)) or ((m2 != m) and (sym2 == sym))) errh2 += 1;
             if (m2 != m) {
                 errh += 1;
-                const n = find_sym(m2, m);
-                if (n == 0) stderr.print("Zorglub\n", .{}) catch unreachable;
+                //                const n = find_sym(m2, m);
+                //                if (n == 0) stderr.print("Zorglub\n", .{}) catch unreachable;
+                //              cpos = compute_sym_all(cpos, n - 1);
             }
         }
         if ((USE_BPOS) and (m2 == m)) bpos = cpos;
+        //if (USE_BPOS) bpos = cpos;
     }
 
     var a = alpha;
@@ -706,7 +708,7 @@ pub fn main() !void {
                 t = std.time.milliTimestamp() - t;
                 total_time += t;
                 if (get_out) best_pos = old_best;
-                try stderr.print("depth={d:3} t={d:7}ms tt={d:7}ms minv={d:7} maxv={d:7} ret={d:7} nodes={d:10} hit={d:8} hit2={d:8} errh={d:8} errh2={d:8} best_pos={x:0>16}\n", .{ maxdepth - base, t, total_time, minv, maxv, ret, nodes, hit, hit2, errh, errh2, best_pos });
+                try stderr.print("depth={d:3} t={d:7}ms tt={d:7}ms minv={d:7} maxv={d:7} ret={d:7} nodes={d:10} hit={d:8} hit2={d:8} errh={d:8} best_pos={x:0>16}\n", .{ maxdepth - base, t, total_time, minv, maxv, ret, nodes, hit, hit2, errh, best_pos });
                 if (best_pos == InvalidPos) {
                     try stderr.print("Game Lost\n", .{});
                     C.exit(0);
